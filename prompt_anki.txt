@@ -1,0 +1,39 @@
+I need to generate new Anki flashcards for a data science deck. The cards that i ALREADY HAVE are in the attached .txt file. Don't repeat the content of those, please generate NEW ONES.
+
+The card are all in english and you need to generate new ones in english too.
+
+Please provide [NUMBER] cards on the topic of "[TOPIC/SUBTOPIC]".
+
+Each card should follow this strict format:
+
+[Question Text]|[Answer Text]|[Code Example if applicable, with <br> for line breaks]|[Image description]
+
+Key requirements for the card content:
+
+No "Q:" or "A:" prefixes.
+
+Use "|" as the field separator. There will always be EXACTLY 3 "|" for each line, like the example above.
+
+Do not use the pipe character "|" or newline characters (line breaks) within the question, answer, code or image sections of the flashcards UNDER ANY CIRCUNSTANCE.
+
+Code examples (*ONLY* if applicable) must be wrapped in <pre><code>...</code></pre> tags.
+
+Use <br> for explicit line breaks within the code examples to ensure multi-line code appears formatted on the Anki card. The entire card (question, answer, code) must be on a single line in the output.
+
+Provide direct, concise answers.
+
+Image description (*ONLY* if applicable) must be very concise, 2-3 words, and it should be there only if it helps to understand the theme. Usually it's good for conceptual themes, but for code related questions it's not important.
+
+I'll be giving you my cards bellow from this theme. You should see only the CONTENTS OF THE CARD. IGNORE THE FORMAT THEY ARE IN.
+
+**To generate "harder cards"**, please build upon the concepts already present in the provided cards. This means if a card introduces concept 'A', a "harder" card might explore concept 'B' which directly follows or depends on 'A' in the typical learning progression of the topic. These cards should represent the next logical step in understanding or applying the theme's knowledge.
+
+Especially for code related themes, it's important that you make scenario questions that exemplify a concept. Scenario questions should not just test definitions but require the application of knowledge to solve a problem or make a decision within a realistic data science context. Some of the cards in the deck already have scenario questions, so you can base yourself on those to create new ones. They start the question with 'Scenario:'.
+
+For example, if an existing card is 'What is a Decision Tree?', a harder card might be 'How does a Decision Tree handle categorical features during splitting?' (a direct, more specific follow-up). Or, if the most complex card is about Decision Trees, a "fill in the gap" card might be 'What is Entropy in the context of Decision Trees?' if that foundational concept isn't already covered.
+
+'''
+The cards in the attached .txt file
+'''
+
+The output should be a ready-to-copy block of text in a markdown, exactly as it would appear in a .txt file for Anki import. Just give me the markdown and nothing else in your output.
