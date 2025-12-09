@@ -11,7 +11,7 @@ import re
 # --- Configuration ---
 ANKI_CONNECT_URL = "http://localhost:8765"
 DB_PATH = "./anki_vector_store"
-# As requested. If this fails, switch to "gemini-1.5-flash"
+# As explicitly requested
 MODEL_NAME = "gemini-2.5-flash-lite"
 
 def get_secret(key):
@@ -40,20 +40,32 @@ def get_model_fields(model_name):
     return res.get("result", [])
 
 def store_image(url):
+    """
+    Downloads image with 'Fake Browser' headers to bypass 403 errors.
+    """
     try:
-        # User-Agent prevents 403 Forbidden from some sites
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get(url, headers=headers, timeout=10)
+        # 1. Masquerade as a real Chrome browser
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://www.google.com/'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         
+        # 2. Convert to Base64 for Anki
         filename = f"gemini_gen_{abs(hash(url))}.jpg"
         image_b64 = base64.b64encode(response.content).decode('utf-8')
         
+        # 3. Upload to Anki
         res = anki_invoke("storeMediaFile", filename=filename, data=image_b64)
         if not res.get("error"):
             return filename
     except Exception as e:
-        st.write(f"⚠️ Download failed for {url}: {e}")
+        # Log the error to UI so you can see it
+        st.write(f"⚠️ Image Download Error for {url}: {e}")
         return None
 
 def search_google_image(query):
@@ -77,7 +89,6 @@ def search_google_image(query):
         res = requests.get(url, params=params)
         data = res.json()
         
-        # Debugging: Save error to session state
         if "error" in data:
             st.session_state['last_img_error'] = data['error']
             return None
