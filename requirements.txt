@@ -2,3 +2,5 @@ streamlit
 google-generativeai
 requests
 pandas
+chromadb
+gTTS
