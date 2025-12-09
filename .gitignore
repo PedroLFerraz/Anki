@@ -14,3 +14,4 @@ setup.py
 .vscode/
 .idea/
 .DS_Store
+anki_vector_store/
