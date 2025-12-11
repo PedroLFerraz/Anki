@@ -17,3 +17,6 @@ prompt_anki.txt
 .idea/
 .DS_Store
 anki_vector_store/
+anki_matrix.pkl
+anki_notes.pkl
+anki_vectorizer.pkl

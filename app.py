@@ -1,14 +1,14 @@
 import streamlit as st
 import pandas as pd
+# 
 from backend import anki, agents, rag, media, utils
 
 st.set_page_config(page_title="Agentic Anki", layout="wide", page_icon="🤖")
 
-# --- POPUP: NEW DECK WIZARD ---
+# --- POPUP ---
 @st.dialog("✨ Create New Learning Project")
 def create_project_wizard():
     st.write("Let's set up a new space for your learning.")
-    
     new_deck_name = st.text_input("Project Name (Deck)", placeholder="e.g., Art History 101")
     model_option = st.radio("Card Template", ["Create Optimized 'Agentic' Template", "Use Existing Anki Model"])
     
@@ -33,7 +33,7 @@ def create_project_wizard():
             st.session_state['wiz_model'] = final_model
             st.rerun()
 
-# --- MAIN APP ---
+# --- MAIN ---
 st.title("🤖 Agentic Anki Generator")
 
 if not anki.invoke("version").get("result"):
@@ -43,7 +43,6 @@ if not anki.invoke("version").get("result"):
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("Project Settings")
-    
     if st.button("➕ New Project Wizard", type="primary"):
         create_project_wizard()
         
@@ -56,26 +55,22 @@ with st.sidebar:
     sel_deck = st.selectbox("Active Deck", decks, index=d_idx)
     sel_model = st.selectbox("Note Type", models, index=m_idx)
     
-    if st.button("🔄 Sync RAG DB"):
-        notes = anki.get_all_notes_in_deck(sel_deck)
-        n = rag.save_notes_to_db(notes)
-        st.success(f"Synced {n} cards.")
-
-    with st.expander("🛠️ Debug Image Search"):
-        test_q = st.text_input("Test Query", "Van Gogh Starry Night")
-        if st.button("Test Search"):
-            # UPDATED: Returns a list now
-            urls = media.search_images(test_q)
-            if urls:
-                st.success(f"Found {len(urls)} candidates.")
-                # Try downloading the first one just to show it works
-                fname = media.download_image_candidates(urls)
-                if fname:
-                    st.write("✅ Download & Embed successful!")
-                else:
-                    st.error("❌ All candidates blocked.")
-            else:
-                st.error("Search failed. No results.")
+    col_sync, col_reset = st.columns([2,1])
+    with col_sync:
+        if st.button("🔄 Sync DB", help="Read cards from Anki"):
+            notes = anki.get_all_notes_in_deck(sel_deck)
+            n = rag.save_notes_to_db(notes)
+            st.success(f"Synced {n} cards.")
+    
+    with col_reset:
+        if st.button("🗑️", help="Force Reset Database"):
+            import os
+            try:
+                os.remove("anki_notes.pkl")
+                os.remove("anki_matrix.pkl")
+                os.remove("anki_vectorizer.pkl")
+                st.toast("Database Cleared", icon="🗑️")
+            except: pass
 
     st.divider()
     st.subheader("Field Mapping")
@@ -88,7 +83,7 @@ with st.sidebar:
         if any(x in f.lower() for x in ["img", "bild", "image", "context"]): default = 1
         elif "code" in f.lower(): default = 2
         elif "audio" in f.lower(): default = 3
-        field_types[f] = st.selectbox(f"{f}", ["Text", "Image", "Code", "Audio"], index=default)
+        field_types[f] = st.selectbox(f"{f}", ["Text", "Image", "Code", "Audio", "(Skip)"], index=default)
 
 # --- WORKFLOW ---
 col1, col2 = st.columns([4, 6])
@@ -99,6 +94,7 @@ with col1:
     num = st.slider("Count", 1, 10, 3)
     
     if st.button("🚀 Run Agents"):
+        # 1. Research
         with st.status("🕵️ Researching...", expanded=True) as status:
             source = agents.research_topic(topic)
             if source != topic:
@@ -106,11 +102,24 @@ with col1:
                 with st.expander("View Guide"): st.write(source)
             status.update(label="Research Done", state="complete", expanded=False)
         
+        # 2. Generation
         with st.spinner("🃏 Generating Cards..."):
-            ctx_list = rag.query_context(source[:100])
-            ctx_str = "\n".join(ctx_list) if ctx_list else "No context."
+            # IMPROVED CONTEXT LOGIC
+            # Query 1: Exact topic (e.g., "Degas")
+            ctx_1 = rag.query_context(topic) 
+            # Query 2: The expanded guide (e.g., "Degas ballerinas...")
+            ctx_2 = rag.query_context(source[:200])
             
-            raw = agents.generate_cards(source, ctx_str, num, field_types)
+            # Merge and Dedup
+            combined_ctx = list(set(ctx_1 + ctx_2))
+            context_str = "\n".join(combined_ctx) if combined_ctx else "No context found (Starting fresh)."
+            
+            # DEBUG: Prove to user what AI sees
+            with st.expander(f"🧠 AI Memory ({len(combined_ctx)} existing cards found)"):
+                st.info("The AI has been told NOT to generate these cards:")
+                st.text(context_str[:1500])
+            
+            raw = agents.generate_cards(source, context_str, num, field_types)
             cards = utils.smart_parse(raw, fields)
             
             if cards:
@@ -144,26 +153,19 @@ with col2:
                 
                 for f, val in note_fields.items():
                     ftype = field_types.get(f, "Text")
-                    if not val or len(val) < 2: continue
+                    if ftype == "(Skip)" or not val or len(val) < 2: 
+                        note_fields[f] = ""
+                        continue
                     
-                    # --- IMAGE LOGIC (UPDATED) ---
                     if ftype == "Image" and "img src" not in val:
                         status.info(f"🖼️ Searching: '{val}'")
-                        
-                        # 1. Get List of URLs
                         candidates = media.search_images(val)
-                        
                         if candidates:
-                            # 2. Try them one by one
                             fname = media.download_image_candidates(candidates)
-                            if fname:
-                                note_fields[f] = f'<img src="{fname}">'
-                            else:
-                                st.warning(f"All {len(candidates)} images failed to download.")
-                        else:
-                            st.warning(f"No results for: {val}")
+                            if fname: note_fields[f] = f'<img src="{fname}">'
+                            else: st.warning(f"Download failed: {val}")
+                        else: st.warning(f"No images: {val}")
 
-                    # --- AUDIO LOGIC ---
                     elif ftype == "Audio" and "[sound" not in val:
                         status.info(f"🔊 Generating Audio...")
                         fname = media.generate_audio(val, audio_lang)
