@@ -6,6 +6,8 @@ venv/
 env/
 .env
 setup.py
+data.txt
+prompt_anki.txt
 
 # Streamlit
 .streamlit/secrets.toml
