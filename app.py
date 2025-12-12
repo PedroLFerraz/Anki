@@ -4,7 +4,7 @@ from backend import anki, agents, rag, media, utils
 
 st.set_page_config(page_title="Agentic Anki", layout="wide", page_icon="🤖")
 
-# --- POPUP ---
+# --- POPUP: NEW DECK WIZARD ---
 @st.dialog("✨ Create New Learning Project")
 def create_project_wizard():
     st.write("Let's set up a new space for your learning.")
@@ -32,7 +32,7 @@ def create_project_wizard():
             st.session_state['wiz_model'] = final_model
             st.rerun()
 
-# --- MAIN ---
+# --- MAIN APP ---
 st.title("🤖 Agentic Anki Generator")
 
 if not anki.invoke("version").get("result"):
@@ -48,13 +48,14 @@ with st.sidebar:
     decks = anki.get_deck_names()
     models = anki.get_model_names()
     
+    # Auto-select from Wizard or Default
     d_idx = decks.index(st.session_state.get('wiz_deck')) if st.session_state.get('wiz_deck') in decks else 0
     m_idx = models.index(st.session_state.get('wiz_model')) if st.session_state.get('wiz_model') in models else 0
     
     sel_deck = st.selectbox("Active Deck", decks, index=d_idx)
     sel_model = st.selectbox("Note Type", models, index=m_idx)
     
-    if st.button("🔄 Sync RAG DB"):
+    if st.button("🔄 Sync RAG DB", help="Updates the AI's knowledge of your deck"):
         notes = anki.get_all_notes_in_deck(sel_deck)
         n = rag.save_notes_to_db(notes)
         st.success(f"Synced {n} cards.")
@@ -81,19 +82,21 @@ with col1:
     num = st.slider("Count", 1, 10, 3)
     
     if st.button("🚀 Run Agents"):
-        # 1. RAG Retrieval (Get user context FIRST)
+        # 1. RAG Retrieval
+        # We query the DB for the User's Topic to see what they already know about it.
         ctx_list = rag.query_context(topic)
         context_str = "\n".join(ctx_list) if ctx_list else "No existing cards found."
         
         # 2. Agent 1: Gap Analysis
         with st.status("🕵️ Analyzing Knowledge Gaps...", expanded=True) as status:
             missing_concepts = agents.analyze_knowledge_gaps(topic, context_str)
-            status.write("Identified missing concepts:")
-            st.info(missing_concepts) # Show the user what the AI found
+            status.write("I found these gaps in your deck:")
+            st.info(missing_concepts)
             status.update(label="Gap Analysis Done", state="complete", expanded=False)
         
         # 3. Agent 2: Generation
         with st.spinner("🃏 Generating Cards..."):
+            # We pass ONLY the missing concepts to the generator
             raw = agents.generate_cards(missing_concepts, num, field_types)
             cards = utils.smart_parse(raw, fields)
             
@@ -121,19 +124,28 @@ with col2:
         
         if st.button(f"📥 Import {len(to_add)} Cards"):
             bar = st.progress(0)
-            status = st.empty()
+            status_box = st.empty()
+            success_count = 0
+            fail_count = 0
             
             for idx, row in to_add.iterrows():
+                # Clean fields
                 note_fields = {k:v for k,v in row.to_dict().items() if k != "✅"}
                 
+                # --- MEDIA PROCESSING ---
                 for f, val in note_fields.items():
                     ftype = field_types.get(f, "Text")
-                    if ftype == "(Skip)" or not val or len(val) < 2: 
+                    
+                    if ftype == "(Skip)": 
                         note_fields[f] = ""
                         continue
                     
+                    if not val or len(val) < 2: 
+                        continue
+                    
+                    # IMAGE
                     if ftype == "Image" and "img src" not in val:
-                        status.info(f"🖼️ Searching: '{val}'")
+                        status_box.info(f"🖼️ Searching: '{val}'")
                         candidates = media.search_images(val)
                         if candidates:
                             fname = media.download_image_candidates(candidates)
@@ -141,13 +153,32 @@ with col2:
                             else: st.warning(f"Download failed: {val}")
                         else: st.warning(f"No results: {val}")
 
+                    # AUDIO
                     elif ftype == "Audio" and "[sound" not in val:
-                        status.info(f"🔊 Generating Audio...")
+                        status_box.info(f"🔊 Generating Audio...")
                         fname = media.generate_audio(val, audio_lang)
                         if fname: note_fields[f] = f'[sound:{fname}]'
 
-                anki.add_note(sel_deck, sel_model, note_fields)
+                # --- ANKI IMPORT (FIXED) ---
+                res = anki.add_note(sel_deck, sel_model, note_fields)
+                
+                # Check for Anki Errors (e.g. Duplicate)
+                if res.get("result"):
+                    success_count += 1
+                else:
+                    fail_count += 1
+                    err_msg = res.get("error", "Unknown Error")
+                    # If it's a duplicate, show a specific warning
+                    if "duplicate" in err_msg.lower():
+                        st.warning(f"Skipped Duplicate: {row.get(fields[0], 'Card')}")
+                    else:
+                        st.error(f"Failed to add card: {err_msg}")
+
                 bar.progress((idx+1)/len(to_add))
             
-            status.success("Done!")
-            st.balloons()
+            status_box.empty()
+            if success_count > 0:
+                st.success(f"Successfully added {success_count} cards!")
+                st.balloons()
+            if fail_count > 0:
+                st.error(f"Skipped {fail_count} cards (likely duplicates).")

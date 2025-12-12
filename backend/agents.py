@@ -12,7 +12,6 @@ def configure_genai():
 def analyze_knowledge_gaps(topic, existing_cards_text):
     """
     AGENT 1: The Curriculum Designer.
-    Instead of just researching, it looks at what the user HAS vs what they NEED.
     """
     api_key = configure_genai()
     if not api_key: return "Error: No API Key"
@@ -20,31 +19,24 @@ def analyze_knowledge_gaps(topic, existing_cards_text):
     model = genai.GenerativeModel(MODEL_NAME)
     
     prompt = f"""
-    You are a strict Data Science & Learning Curriculum Expert.
+    You are a strict Data Science & Learning Expert.
     
-    USER GOAL: Master the topic "{topic}".
+    USER GOAL: Expand knowledge on "{topic}".
     
-    CURRENT KNOWLEDGE (User's Existing Flashcards):
+    THE USER ALREADY KNOWS (Do NOT repeat these):
     '''
     {existing_cards_text}
     '''
     
-    TASK: Identify 3-5 SPECIFIC "Knowledge Gaps" or "Advanced Concepts" that are missing from the Current Knowledge.
+    TASK: Identify 3-5 SPECIFIC "Knowledge Gaps" that are missing from the user's knowledge.
     
-    RULES:
-    1. IGNORE basic definitions if they are already present (e.g., if user has "What is a List?", do NOT suggest it).
-    2. Focus on "Level 2 & 3" knowledge:
-       - COMPARING concepts (e.g., List vs Tuple performance).
-       - SCENARIOS (e.g., When to use X over Y?).
-       - EDGE CASES (e.g., What happens if...?).
-       - IMPLEMENTATION details.
-    3. If the user has NO existing cards, suggest the foundational concepts first.
+    CRITICAL RULES:
+    1. If the user already has a card about a specific fact (e.g. "Monet painted Water Lilies"), DO NOT suggest it.
+    2. Suggest a DIFFERENT angle (e.g. "Monet's technique for light" or "The location of his garden").
+    3. If the topic is technical (like SQL), suggest advanced edge cases or performance comparisons.
     
     OUTPUT FORMAT:
-    Return ONLY a bulleted list of the missing concepts to be turned into cards.
-    Example:
-    - Performance difference between LEFT JOIN and INNER JOIN on nulls.
-    - How Window Functions handle ties in ranking (DENSE_RANK vs RANK).
+    Return ONLY a bulleted list of the missing concepts.
     """
     
     try:
@@ -56,7 +48,6 @@ def analyze_knowledge_gaps(topic, existing_cards_text):
 def generate_cards(missing_concepts, num, field_config):
     """
     AGENT 2: The Content Creator.
-    Generates cards based ONLY on the specific gaps found by Agent 1.
     """
     api_key = configure_genai()
     
@@ -72,9 +63,7 @@ def generate_cards(missing_concepts, num, field_config):
         else: instructions.append(f"- Field '{f}': Text.")
 
     prompt = f"""
-    Generate {num} high-quality Anki cards.
-    
-    SOURCE MATERIAL (These are the specific gaps to fill):
+    Generate {num} Anki cards based on these MISSING CONCEPTS:
     '''
     {missing_concepts}
     '''
@@ -86,8 +75,7 @@ def generate_cards(missing_concepts, num, field_config):
     1. {len(fields_list)-1} pipes "|" per line.
     2. No markdown blocks.
     3. {" ".join(instructions)}
-    4. Make the Questions specific (Scenario-based preferred).
-    5. Ensure the Answer explains "Why" or "How", not just "What".
+    4. Ensure specific, scenario-based questions.
     
     Output only the raw text lines.
     """
