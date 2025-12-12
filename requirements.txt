@@ -2,5 +2,8 @@ streamlit
 google-generativeai
 requests
 pandas
-chromadb
+scikit-learn
+numpy
 gTTS
+duckduckgo_search
+ddgs

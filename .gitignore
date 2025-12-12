@@ -6,6 +6,8 @@ venv/
 env/
 .env
 setup.py
+data.txt
+prompt_anki.txt
 
 # Streamlit
 .streamlit/secrets.toml
@@ -15,3 +17,6 @@ setup.py
 .idea/
 .DS_Store
 anki_vector_store/
+anki_matrix.pkl
+anki_notes.pkl
+anki_vectorizer.pkl
