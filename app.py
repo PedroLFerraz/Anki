@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-# 
 from backend import anki, agents, rag, media, utils
 
 st.set_page_config(page_title="Agentic Anki", layout="wide", page_icon="🤖")
@@ -55,22 +54,10 @@ with st.sidebar:
     sel_deck = st.selectbox("Active Deck", decks, index=d_idx)
     sel_model = st.selectbox("Note Type", models, index=m_idx)
     
-    col_sync, col_reset = st.columns([2,1])
-    with col_sync:
-        if st.button("🔄 Sync DB", help="Read cards from Anki"):
-            notes = anki.get_all_notes_in_deck(sel_deck)
-            n = rag.save_notes_to_db(notes)
-            st.success(f"Synced {n} cards.")
-    
-    with col_reset:
-        if st.button("🗑️", help="Force Reset Database"):
-            import os
-            try:
-                os.remove("anki_notes.pkl")
-                os.remove("anki_matrix.pkl")
-                os.remove("anki_vectorizer.pkl")
-                st.toast("Database Cleared", icon="🗑️")
-            except: pass
+    if st.button("🔄 Sync RAG DB"):
+        notes = anki.get_all_notes_in_deck(sel_deck)
+        n = rag.save_notes_to_db(notes)
+        st.success(f"Synced {n} cards.")
 
     st.divider()
     st.subheader("Field Mapping")
@@ -94,32 +81,20 @@ with col1:
     num = st.slider("Count", 1, 10, 3)
     
     if st.button("🚀 Run Agents"):
-        # 1. Research
-        with st.status("🕵️ Researching...", expanded=True) as status:
-            source = agents.research_topic(topic)
-            if source != topic:
-                status.write("Topic expanded into Guide.")
-                with st.expander("View Guide"): st.write(source)
-            status.update(label="Research Done", state="complete", expanded=False)
+        # 1. RAG Retrieval (Get user context FIRST)
+        ctx_list = rag.query_context(topic)
+        context_str = "\n".join(ctx_list) if ctx_list else "No existing cards found."
         
-        # 2. Generation
+        # 2. Agent 1: Gap Analysis
+        with st.status("🕵️ Analyzing Knowledge Gaps...", expanded=True) as status:
+            missing_concepts = agents.analyze_knowledge_gaps(topic, context_str)
+            status.write("Identified missing concepts:")
+            st.info(missing_concepts) # Show the user what the AI found
+            status.update(label="Gap Analysis Done", state="complete", expanded=False)
+        
+        # 3. Agent 2: Generation
         with st.spinner("🃏 Generating Cards..."):
-            # IMPROVED CONTEXT LOGIC
-            # Query 1: Exact topic (e.g., "Degas")
-            ctx_1 = rag.query_context(topic) 
-            # Query 2: The expanded guide (e.g., "Degas ballerinas...")
-            ctx_2 = rag.query_context(source[:200])
-            
-            # Merge and Dedup
-            combined_ctx = list(set(ctx_1 + ctx_2))
-            context_str = "\n".join(combined_ctx) if combined_ctx else "No context found (Starting fresh)."
-            
-            # DEBUG: Prove to user what AI sees
-            with st.expander(f"🧠 AI Memory ({len(combined_ctx)} existing cards found)"):
-                st.info("The AI has been told NOT to generate these cards:")
-                st.text(context_str[:1500])
-            
-            raw = agents.generate_cards(source, context_str, num, field_types)
+            raw = agents.generate_cards(missing_concepts, num, field_types)
             cards = utils.smart_parse(raw, fields)
             
             if cards:
@@ -164,7 +139,7 @@ with col2:
                             fname = media.download_image_candidates(candidates)
                             if fname: note_fields[f] = f'<img src="{fname}">'
                             else: st.warning(f"Download failed: {val}")
-                        else: st.warning(f"No images: {val}")
+                        else: st.warning(f"No results: {val}")
 
                     elif ftype == "Audio" and "[sound" not in val:
                         status.info(f"🔊 Generating Audio...")
