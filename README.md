@@ -2,7 +2,7 @@
 
 A powerful, local AI tool that turns any topic into high-quality Anki flashcards. It uses an **Agentic Workflow** to research topics, check your existing deck for duplicates (RAG), and automatically format cards with images and audio.
 
-![App Screenshot](https://via.placeholder.com/800x400?text=Agentic+Anki+Dashboard+Preview) *(Replace with actual screenshot if you have one)*
+<!-- ![App Screenshot](https://via.placeholder.com/800x400?text=Agentic+Anki+Dashboard+Preview) *(Replace with actual screenshot if you have one)* -->
 
 ## 🚀 Key Features
 
