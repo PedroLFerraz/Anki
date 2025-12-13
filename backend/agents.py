@@ -31,9 +31,9 @@ def analyze_knowledge_gaps(topic, existing_cards_text):
     TASK: Identify 3-5 SPECIFIC "Knowledge Gaps" that are missing from the user's knowledge.
     
     CRITICAL RULES:
-    1. If the user already has a card about a specific fact (e.g. "Monet painted Water Lilies"), DO NOT suggest it.
-    2. Suggest a DIFFERENT angle (e.g. "Monet's technique for light" or "The location of his garden").
-    3. If the topic is technical (like SQL), suggest advanced edge cases or performance comparisons.
+    1. If the user already has a card about a specific fact, DO NOT suggest it.
+    2. Suggest a DIFFERENT angle or advanced edge cases.
+    3. Focus on "Why", "How", and "Compare", not just "What".
     
     OUTPUT FORMAT:
     Return ONLY a bulleted list of the missing concepts.
@@ -52,15 +52,21 @@ def generate_cards(missing_concepts, num, field_config):
     api_key = configure_genai()
     
     fields_list = list(field_config.keys())
-    structure = "|".join(f"[{f}]" for f in fields_list)
+    
+    # FIX 1: Removed square brackets from here so the AI doesn't copy them
+    structure_example = "|".join(f"{f}" for f in fields_list)
     
     instructions = []
-    for f, f_type in field_config.items():
+    for i, (f, f_type) in enumerate(field_config.items()):
+        # FIX 2: Specific instruction for the Topic field (usually the first one)
+        if i == 0:
+            instructions.append(f"- Field '{f}': specific sub-topic (e.g. 'Impressionism: Light' NOT just 'Impressionism').")
+        
         if f_type == "Image": instructions.append(f"- Field '{f}': 2-3 word search query. NO URLs.")
         elif f_type == "Audio": instructions.append(f"- Field '{f}': Text to be spoken.")
         elif f_type == "Code": instructions.append(f"- Field '{f}': <pre><code> wrapped.")
         elif f_type == "(Skip)": instructions.append(f"- Field '{f}': LEAVE EMPTY.")
-        else: instructions.append(f"- Field '{f}': Text.")
+        else: instructions.append(f"- Field '{f}': Plain text (NO brackets).")
 
     prompt = f"""
     Generate {num} Anki cards based on these MISSING CONCEPTS:
@@ -69,13 +75,14 @@ def generate_cards(missing_concepts, num, field_config):
     '''
     
     STRICT FORMAT:
-    {structure}
+    {structure_example}
     
     INSTRUCTIONS:
-    1. {len(fields_list)-1} pipes "|" per line.
-    2. No markdown blocks.
-    3. {" ".join(instructions)}
-    4. Ensure specific, scenario-based questions.
+    1. Output raw lines ONLY.
+    2. Use exactly {len(fields_list)-1} pipes "|" per line.
+    3. Do NOT use markdown bolding or brackets [ ] around text.
+    4. {" ".join(instructions)}
+    5. Ensure questions are specific and answers explain "Why".
     
     Output only the raw text lines.
     """
