@@ -117,7 +117,7 @@ with col2:
             column_config={"✅": st.column_config.CheckboxColumn("Add?", default=True)},
             disabled=fields,
             hide_index=True,
-            use_container_width=True
+            width=True
         )
         
         to_add = edited_df[edited_df["✅"] == True]
