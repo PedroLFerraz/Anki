@@ -9,58 +9,118 @@ def configure_genai():
         genai.configure(api_key=api_key)
     return api_key
 
-def analyze_knowledge_gaps(topic, existing_cards_text):
+def identify_expert_persona(topic, source_snippet=""):
     """
-    AGENT 1: The Curriculum Designer.
+    AGENT 0: The Router.
+    Decides who the best expert is for the given context.
     """
     api_key = configure_genai()
-    if not api_key: return "Error: No API Key"
+    if not api_key: return "Expert Tutor"
     
     model = genai.GenerativeModel(MODEL_NAME)
     
     prompt = f"""
-    You are a strict Data Science & Learning Expert.
+    Determine the single best "Job Title" or "Expert Persona" to teach the following topic.
+    TOPIC: "{topic}"
+    CONTEXT_SNIPPET: "{source_snippet[:200]}"
     
-    USER GOAL: Expand knowledge on "{topic}".
+    Examples:
+    - Topic: "SQL" -> "Senior Database Administrator"
+    - Topic: "Monet" -> "Art History Professor"
+    - Topic: "Tort Law" -> "Bar Exam Prep Tutor"
     
-    THE USER ALREADY KNOWS (Do NOT repeat these):
-    '''
-    {existing_cards_text}
-    '''
-    
-    TASK: Identify 3-5 SPECIFIC "Knowledge Gaps" that are missing from the user's knowledge.
-    
-    CRITICAL RULES:
-    1. If the user already has a card about a specific fact, DO NOT suggest it.
-    2. Suggest a DIFFERENT angle or advanced edge cases.
-    3. Focus on "Why", "How", and "Compare", not just "What".
-    
-    OUTPUT FORMAT:
-    Return ONLY a bulleted list of the missing concepts.
+    OUTPUT: Just the Job Title. No extra text.
     """
-    
     try:
         response = model.generate_content(prompt)
         return response.text.strip()
-    except Exception as e:
-        return f"Focus on advanced concepts of {topic}."
+    except:
+        return "Expert Tutor"
 
-def generate_cards(missing_concepts, num, field_config):
+def analyze_knowledge_gaps(topic, existing_cards_text, source_text=None):
+    """
+    AGENT 1: The Curriculum Designer.
+    Now dynamic based on the identified persona.
+    """
+    api_key = configure_genai()
+    if not api_key: return "Error: No API Key", "Expert"
+    
+    model = genai.GenerativeModel(MODEL_NAME)
+    
+    # 1. Identify the Persona first
+    snippet = source_text[:500] if source_text else topic
+    persona = identify_expert_persona(topic, snippet)
+    
+    # 2. Build Prompt based on Source Mode
+    if source_text:
+        prompt = f"""
+        You are a strict {persona}.
+        
+        SOURCE MATERIAL (The user's study document):
+        '''
+        {source_text[:30000]} 
+        '''
+        
+        USER'S EXISTING CARDS:
+        '''
+        {existing_cards_text}
+        '''
+        
+        TASK: Compare the SOURCE MATERIAL vs EXISTING CARDS.
+        Identify 3-5 concepts found in the SOURCE MATERIAL that are missing from the existing cards.
+        
+        RULES:
+        1. Act exactly like a {persona}.
+        2. ONLY suggest concepts actually present in the SOURCE MATERIAL.
+        3. Ignore outside knowledge not in the text.
+        
+        OUTPUT FORMAT:
+        Bulleted list of missing concepts.
+        """
+    else:
+        prompt = f"""
+        You are a strict {persona}.
+        
+        USER GOAL: Expand knowledge on "{topic}".
+        
+        THE USER ALREADY KNOWS:
+        '''
+        {existing_cards_text}
+        '''
+        
+        TASK: Identify 3-5 SPECIFIC "Knowledge Gaps" missing from the user's knowledge.
+        
+        CRITICAL RULES:
+        1. Act exactly like a {persona}.
+        2. Suggest advanced angles, edge cases, or comparisons specific to your field.
+        3. Do NOT repeat what the user already knows.
+        
+        OUTPUT FORMAT:
+        Bulleted list of missing concepts.
+        """
+    
+    try:
+        response = model.generate_content(prompt)
+        # Return both the text AND the persona so we can pass it to Agent 2
+        return response.text.strip(), persona
+    except Exception as e:
+        return f"Error analyzing gaps: {e}", "Expert"
+
+def generate_cards(missing_concepts, num, field_config, persona="Expert Tutor"):
     """
     AGENT 2: The Content Creator.
+    Uses the passed persona to maintain tone.
     """
     api_key = configure_genai()
     
     fields_list = list(field_config.keys())
     
-    # FIX 1: Removed square brackets from here so the AI doesn't copy them
     structure_example = "|".join(f"{f}" for f in fields_list)
     
     instructions = []
     for i, (f, f_type) in enumerate(field_config.items()):
-        # FIX 2: Specific instruction for the Topic field (usually the first one)
         if i == 0:
-            instructions.append(f"- Field '{f}': specific sub-topic (e.g. 'Impressionism: Light' NOT just 'Impressionism').")
+            instructions.append(f"- Field '{f}': specific sub-topic (e.g. 'Impressionism: Light').")
         
         if f_type == "Image": instructions.append(f"- Field '{f}': 2-3 word search query. NO URLs.")
         elif f_type == "Audio": instructions.append(f"- Field '{f}': Text to be spoken.")
@@ -69,7 +129,9 @@ def generate_cards(missing_concepts, num, field_config):
         else: instructions.append(f"- Field '{f}': Plain text (NO brackets).")
 
     prompt = f"""
-    Generate {num} Anki cards based on these MISSING CONCEPTS:
+    You are a strict {persona}.
+    
+    TASK: Generate {num} Anki cards based on these MISSING CONCEPTS:
     '''
     {missing_concepts}
     '''
@@ -82,7 +144,7 @@ def generate_cards(missing_concepts, num, field_config):
     2. Use exactly {len(fields_list)-1} pipes "|" per line.
     3. Do NOT use markdown bolding or brackets [ ] around text.
     4. {" ".join(instructions)}
-    5. Ensure questions are specific and answers explain "Why".
+    5. Write as a {persona} would (use correct terminology).
     
     Output only the raw text lines.
     """
