@@ -130,6 +130,7 @@ with tab_gen:
                 # --- NEW: LOGGING TO DATABASE ---
                 analytics.log_generation_run(
                     topic=topic,
+                    deck_name=sel_deck,
                     prompt_type="Agentic Gap Analysis",
                     cards_data=st.session_state['gen_cards'],
                     accepted_indices=accepted_indices
@@ -174,34 +175,43 @@ with tab_gen:
 # TAB 2: ANALYTICS DASHBOARD
 # ==========================================
 with tab_data:
-    st.header("📊 AI Performance & Learning Stats")
+    col_head, col_filter = st.columns([3, 1])
+    with col_head:
+        st.header("📊 AI Performance & Learning Stats")
     
-    df_stats = analytics.get_analytics_df()
+    # --- DECK FILTER ---
+    with col_filter:
+        available_decks = analytics.get_unique_decks()
+        filter_deck = st.selectbox("Filter by Deck", available_decks)
+    
+    # Pass the filter to the data fetchers
+    df_stats = analytics.get_analytics_df(deck_filter=filter_deck)
     
     if not df_stats.empty:
-        # Calculate Acceptance Rate
         df_stats['acceptance_rate'] = (df_stats['accepted'] / df_stats['total_cards']) * 100
         
-        # Metric Cards
         m1, m2, m3 = st.columns(3)
-        m1.metric("Total Cards Generated", df_stats['total_cards'].sum())
+        m1.metric("Total Cards", df_stats['total_cards'].sum())
         m2.metric("Cards Accepted", df_stats['accepted'].sum())
-        m3.metric("Global Quality Score", f"{df_stats['acceptance_rate'].mean():.1f}%")
+        m3.metric("Quality Score", f"{df_stats['acceptance_rate'].mean():.1f}%")
         
         st.divider()
         
-        # Charts
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("Accepted vs Rejected by Topic")
-            st.bar_chart(df_stats.set_index("topic")[['accepted', 'rejected']], stack=True)
+            st.subheader("Accepted vs Rejected")
+            # Show Deck Name in tooltip if 'All Decks' is selected
+            if filter_deck == "All Decks":
+                st.bar_chart(df_stats, x="deck_name", y=['accepted', 'rejected'], stack=True)
+            else:
+                st.bar_chart(df_stats.set_index("topic")[['accepted', 'rejected']], stack=True)
             
         with c2:
             st.subheader("Quality Score (Acceptance %)")
             st.bar_chart(df_stats.set_index("topic")['acceptance_rate'], color="#4CAF50")
             
         st.divider()
-        st.subheader("Recent Generation Logs")
-        st.dataframe(analytics.get_recent_logs(), width=1000)
+        st.subheader(f"Recent Logs ({filter_deck})")
+        st.dataframe(analytics.get_recent_logs(deck_filter=filter_deck), width=1000)
     else:
-        st.info("No data yet. Generate and Import some cards to see stats!")
+        st.info(f"No data found for {filter_deck}. Generate cards to see stats!")

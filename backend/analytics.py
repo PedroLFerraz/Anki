@@ -6,20 +6,19 @@ from datetime import datetime
 DB_NAME = "anki_analytics.db"
 
 def init_db():
-    """Creates the tables if they don't exist."""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     
-    # Table 1: Runs (Each time you click 'Generate')
+    # Updated: Added 'deck_name' column
     c.execute('''CREATE TABLE IF NOT EXISTS runs (
         run_id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         topic TEXT,
+        deck_name TEXT, 
         prompt_type TEXT,
         total_generated INTEGER
     )''')
     
-    # Table 2: Cards (Individual cards and whether you liked them)
     c.execute('''CREATE TABLE IF NOT EXISTS cards (
         card_id INTEGER PRIMARY KEY AUTOINCREMENT,
         run_id INTEGER,
@@ -27,37 +26,37 @@ def init_db():
         front TEXT,
         back TEXT,
         fields_json TEXT,
-        status TEXT, -- 'ACCEPTED' or 'REJECTED'
+        status TEXT,
         FOREIGN KEY(run_id) REFERENCES runs(run_id)
     )''')
     
     conn.commit()
     conn.close()
 
-def log_generation_run(topic, prompt_type, cards_data, accepted_indices):
+def log_generation_run(topic, deck_name, prompt_type, cards_data, accepted_indices):
     """
-    Logs a batch of cards.
-    cards_data: List of dicts (all cards generated)
-    accepted_indices: List of integers (indexes of cards the user checked)
+    Logs generation data including the target DECK.
     """
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     
-    # 1. Log the Run
-    c.execute("INSERT INTO runs (topic, prompt_type, total_generated) VALUES (?, ?, ?)",
-              (topic, prompt_type, len(cards_data)))
+    # Ensure column exists (Migration for existing users)
+    try:
+        c.execute("ALTER TABLE runs ADD COLUMN deck_name TEXT")
+    except:
+        pass # Column already exists
+    
+    # 1. Log the Run with Deck Name
+    c.execute("INSERT INTO runs (topic, deck_name, prompt_type, total_generated) VALUES (?, ?, ?, ?)",
+              (topic, deck_name, prompt_type, len(cards_data)))
     run_id = c.lastrowid
     
     # 2. Log each Card
     for i, card in enumerate(cards_data):
         status = "ACCEPTED" if i in accepted_indices else "REJECTED"
         
-        # We try to guess Front/Back for analytics, or just dump JSON
-        # Assuming first field is Topic/Front and second is Question/Back
         keys = list(card.keys())
-        # Filter out the checkbox key if present
         clean_keys = [k for k in keys if k != '✅']
-        
         front = card.get(clean_keys[0], "") if len(clean_keys) > 0 else ""
         back = card.get(clean_keys[1], "") if len(clean_keys) > 1 else ""
         
@@ -68,29 +67,63 @@ def log_generation_run(topic, prompt_type, cards_data, accepted_indices):
     conn.commit()
     conn.close()
 
-def get_analytics_df():
-    """Returns raw data for the dashboard."""
+def get_analytics_df(deck_filter=None):
+    """
+    Returns data, optionally filtered by a specific deck.
+    """
     conn = sqlite3.connect(DB_NAME)
     
-    # Query: Acceptance Rate per Topic
-    df = pd.read_sql_query("""
+    query = """
         SELECT 
-            topic,
+            c.topic,
+            r.deck_name,
             COUNT(*) as total_cards,
-            SUM(CASE WHEN status='ACCEPTED' THEN 1 ELSE 0 END) as accepted,
-            SUM(CASE WHEN status='REJECTED' THEN 1 ELSE 0 END) as rejected
-        FROM cards
-        GROUP BY topic
-    """, conn)
+            SUM(CASE WHEN c.status='ACCEPTED' THEN 1 ELSE 0 END) as accepted,
+            SUM(CASE WHEN c.status='REJECTED' THEN 1 ELSE 0 END) as rejected
+        FROM cards c
+        JOIN runs r ON c.run_id = r.run_id
+    """
     
+    params = []
+    if deck_filter and deck_filter != "All Decks":
+        query += " WHERE r.deck_name = ?"
+        params.append(deck_filter)
+        
+    query += " GROUP BY c.topic, r.deck_name"
+    
+    df = pd.read_sql_query(query, conn, params=params)
     conn.close()
     return df
 
-def get_recent_logs():
+def get_recent_logs(deck_filter=None):
     conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT * FROM cards ORDER BY card_id DESC LIMIT 50", conn)
+    
+    query = """
+        SELECT c.card_id, r.timestamp, r.deck_name, c.topic, c.front, c.status 
+        FROM cards c
+        JOIN runs r ON c.run_id = r.run_id
+    """
+    
+    params = []
+    if deck_filter and deck_filter != "All Decks":
+        query += " WHERE r.deck_name = ?"
+        params.append(deck_filter)
+        
+    query += " ORDER BY c.card_id DESC LIMIT 50"
+    
+    df = pd.read_sql_query(query, conn, params=params)
     conn.close()
     return df
 
-# Initialize immediately on import
+def get_unique_decks():
+    """Get list of all decks ever used in the logs."""
+    conn = sqlite3.connect(DB_NAME)
+    try:
+        df = pd.read_sql_query("SELECT DISTINCT deck_name FROM runs WHERE deck_name IS NOT NULL", conn)
+        return ["All Decks"] + df['deck_name'].tolist()
+    except:
+        return ["All Decks"]
+    finally:
+        conn.close()
+
 init_db()
