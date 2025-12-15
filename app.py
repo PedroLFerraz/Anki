@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from backend import anki, agents, rag, media, utils, analytics # <--- Import new module
+from backend import anki, agents, rag, media, utils, analytics, ingestion # <--- Added ingestion
 
 st.set_page_config(page_title="Agentic Anki", layout="wide", page_icon="🤖")
 
@@ -84,21 +84,51 @@ with tab_gen:
 
     with col1:
         st.subheader("1. Agent Workflow")
-        topic = st.text_input("Topic", "Impressionism")
+        
+        # --- NEW: SOURCE SELECTOR ---
+        source_mode = st.radio("Source Material", ["General AI Knowledge", "Upload File (PDF/Txt)"], horizontal=True)
+        
+        topic = "General Context" # Default
+        file_text = None
+        
+        if source_mode == "Upload File (PDF/Txt)":
+            uploaded_file = st.file_uploader("Upload Study Material", type=['pdf', 'txt', 'md'])
+            if uploaded_file:
+                with st.spinner("Reading file..."):
+                    file_text = ingestion.extract_text_from_file(uploaded_file)
+                    st.caption(f"Loaded {len(file_text)} characters.")
+                    topic = uploaded_file.name # Set topic to filename for logging
+        else:
+            topic = st.text_input("Topic", "Impressionism")
+        
         num = st.slider("Count", 1, 10, 3)
         
         if st.button("🚀 Run Agents"):
-            ctx_list = rag.query_context(topic)
+            # 1. RAG Retrieval
+            query_text = topic if not file_text else file_text[:500]
+            ctx_list = rag.query_context(query_text)
             context_str = "\n".join(ctx_list) if ctx_list else "No existing cards found."
             
-            with st.status("🕵️ Analyzing Knowledge Gaps...", expanded=True) as status:
-                missing_concepts = agents.analyze_knowledge_gaps(topic, context_str)
-                status.write("Identified missing concepts:")
+            # 2. Agent 1: Gap Analysis (Now returns Persona too)
+            with st.status("🕵️ Analyzing Context...", expanded=True) as status:
+                missing_concepts, persona = agents.analyze_knowledge_gaps(topic, context_str, source_text=file_text)
+                
+                # Show the user the detected persona
+                status.write(f"🤖 AI Persona Adopted: **{persona}**")
+                status.write("Plan of Action:")
                 st.info(missing_concepts)
-                status.update(label="Gap Analysis Done", state="complete", expanded=False)
+                
+                # Save for Agent 2
+                st.session_state['current_persona'] = persona
+                
+                status.update(label="Analysis Done", state="complete", expanded=False)
             
-            with st.spinner("🃏 Generating Cards..."):
-                raw = agents.generate_cards(missing_concepts, num, field_types)
+            # 3. Agent 2: Generation
+            with st.spinner(f"🃏 Generating Cards as {st.session_state.get('current_persona', 'Expert')}..."):
+                # Pass the persona here!
+                current_p = st.session_state.get('current_persona', 'Expert Tutor')
+                
+                raw = agents.generate_cards(missing_concepts, num, field_types, persona=current_p)
                 cards = utils.smart_parse(raw, fields)
                 
                 if cards:
@@ -107,7 +137,6 @@ with tab_gen:
                 else:
                     st.error("Generation failed.")
                     st.code(raw)
-
     with col2:
         st.subheader("2. Review & Import")
         if 'gen_cards' in st.session_state:

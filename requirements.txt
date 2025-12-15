@@ -7,3 +7,4 @@ numpy
 gTTS
 duckduckgo_search
 ddgs
+pypdf
