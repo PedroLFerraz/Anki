@@ -37,7 +37,7 @@ def identify_expert_persona(topic, source_snippet=""):
     except:
         return "Expert Tutor"
 
-def analyze_knowledge_gaps(topic, existing_cards_text, source_text=None):
+def analyze_knowledge_gaps(topic, existing_cards_text, source_text=None, num=3):
     """
     AGENT 1: The Curriculum Designer.
     Now dynamic based on the identified persona.
@@ -67,7 +67,7 @@ def analyze_knowledge_gaps(topic, existing_cards_text, source_text=None):
         '''
         
         TASK: Compare the SOURCE MATERIAL vs EXISTING CARDS.
-        Identify 3-5 concepts found in the SOURCE MATERIAL that are missing from the existing cards.
+        Identify {num} concepts or specific examples found in the SOURCE MATERIAL that are missing from the existing cards.
         
         RULES:
         1. Act exactly like a {persona}.
@@ -88,7 +88,7 @@ def analyze_knowledge_gaps(topic, existing_cards_text, source_text=None):
         {existing_cards_text}
         '''
         
-        TASK: Identify 3-5 SPECIFIC "Knowledge Gaps" missing from the user's knowledge.
+        TASK: Identify {num} SPECIFIC "Knowledge Gaps" or new examples (e.g. Artworks) missing from the user's knowledge.
         
         CRITICAL RULES:
         1. Act exactly like a {persona}.
@@ -119,14 +119,14 @@ def generate_cards(missing_concepts, num, field_config, persona="Expert Tutor"):
     
     instructions = []
     for i, (f, f_type) in enumerate(field_config.items()):
-        if i == 0:
+        if "topic" in f.lower():
             instructions.append(f"- Field '{f}': specific sub-topic (e.g. 'Impressionism: Light').")
         
         if f_type == "Image": instructions.append(f"- Field '{f}': 2-3 word search query. NO URLs.")
         elif f_type == "Audio": instructions.append(f"- Field '{f}': Text to be spoken.")
         elif f_type == "Code": instructions.append(f"- Field '{f}': <pre><code> wrapped.")
         elif f_type == "(Skip)": instructions.append(f"- Field '{f}': LEAVE EMPTY.")
-        else: instructions.append(f"- Field '{f}': Plain text (NO brackets).")
+        elif "topic" not in f.lower(): instructions.append(f"- Field '{f}': Plain text (NO brackets).")
 
     prompt = f"""
     You are a strict {persona}.
@@ -139,12 +139,16 @@ def generate_cards(missing_concepts, num, field_config, persona="Expert Tutor"):
     STRICT FORMAT:
     {structure_example}
     
+    (Provide exactly ONE line per card, for {num} total cards.)
+    
     INSTRUCTIONS:
     1. Output raw lines ONLY.
     2. Use exactly {len(fields_list)-1} pipes "|" per line.
     3. Do NOT use markdown bolding or brackets [ ] around text.
     4. {" ".join(instructions)}
     5. Write as a {persona} would (use correct terminology).
+    6. CRITICAL: For the 'Artist' field, you MUST provide the FULL first and last name of the artist (e.g., 'Vincent van Gogh', not just 'van Gogh').
+    7. CRITICAL: DO NOT use the pipe character "|" inside any of your text fields. It must ONLY be used to separate fields.
     
     Output only the raw text lines.
     """

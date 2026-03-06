@@ -4,33 +4,15 @@ from backend import anki, agents, rag, media, utils, analytics, ingestion # <---
 
 st.set_page_config(page_title="Agentic Anki", layout="wide", page_icon="🤖")
 
-# --- WIZARD (Kept same) ---
-@st.dialog("✨ Create New Learning Project")
-def create_project_wizard():
-    st.write("Let's set up a new space for your learning.")
-    new_deck_name = st.text_input("Project Name (Deck)", placeholder="e.g., Art History 101")
-    model_option = st.radio("Card Template", ["Create Optimized 'Agentic' Template", "Use Existing Anki Model"])
-    
-    existing_model = None
-    if "Use Existing" in model_option:
-        existing_model = st.selectbox("Select Model", anki.get_model_names())
-    
-    description = st.text_area("What is this deck about?", placeholder="Context helps the AI...")
-    
-    if st.button("🚀 Create Project"):
-        if not new_deck_name:
-            st.error("Please name your deck.")
-        else:
-            anki.create_deck(new_deck_name)
-            final_model = existing_model
-            if "Create Optimized" in model_option:
-                final_model = "AI Agentic Note"
-                anki.create_custom_model(final_model, description)
-            
-            st.success(f"Created '{new_deck_name}'!")
-            st.session_state['wiz_deck'] = new_deck_name
-            st.session_state['wiz_model'] = final_model
-            st.rerun()
+# --- INITIALIZATION ---
+def ensure_artwork_setup():
+    decks = anki.get_deck_names()
+    if "Great Works of Art" not in decks:
+        anki.create_deck("Great Works of Art")
+        
+    models = anki.get_model_names()
+    if "Artwork Card" not in models:
+        anki.create_artwork_model("Artwork Card")
 
 # --- MAIN APP ---
 st.title("🤖 Agentic Anki Generator")
@@ -49,17 +31,13 @@ with tab_gen:
     # --- SIDEBAR MOVED HERE FOR CLEANLINESS ---
     with st.sidebar:
         st.header("Project Settings")
-        if st.button("➕ New Project Wizard", type="primary"):
-            create_project_wizard()
-            
-        decks = anki.get_deck_names()
-        models = anki.get_model_names()
         
-        d_idx = decks.index(st.session_state.get('wiz_deck')) if st.session_state.get('wiz_deck') in decks else 0
-        m_idx = models.index(st.session_state.get('wiz_model')) if st.session_state.get('wiz_model') in models else 0
+        ensure_artwork_setup()
+        sel_deck = "Great Works of Art"
+        sel_model = "Artwork Card"
         
-        sel_deck = st.selectbox("Active Deck", decks, index=d_idx)
-        sel_model = st.selectbox("Note Type", models, index=m_idx)
+        st.info(f"Active Deck: **{sel_deck}**")
+        st.info(f"Note Type: **{sel_model}**")
         
         if st.button("🔄 Sync RAG DB"):
             notes = anki.get_all_notes_in_deck(sel_deck)
@@ -74,7 +52,7 @@ with tab_gen:
 
         for f in fields:
             default = 0
-            if any(x in f.lower() for x in ["img", "bild", "image", "context"]): default = 1
+            if any(x in f.lower() for x in ["img", "bild", "image", "context", "artwork"]): default = 1
             elif "code" in f.lower(): default = 2
             elif "audio" in f.lower(): default = 3
             field_types[f] = st.selectbox(f"{f}", ["Text", "Image", "Code", "Audio", "(Skip)"], index=default)
@@ -103,15 +81,28 @@ with tab_gen:
         
         num = st.slider("Count", 1, 10, 3)
         
+        # Load Existing Artworks
+        notes = anki.get_all_notes_in_deck(sel_deck)
+        existing_titles = []
+        for n in notes:
+            parts = n["content"].split(" | ")
+            # In Artwork Card, "Title" is the 4th field (index 3)
+            # Or if "Artwork" (Image query) is index 0, we could use that, but title makes more sense to avoid dupes.
+            if len(parts) >= 4 and parts[3].strip():
+                existing_titles.append(parts[3].strip())
+        
+        if existing_titles:
+            with st.expander(f"🎨 Artworks Already in Deck ({len(existing_titles)})"):
+                st.write(", ".join(existing_titles))
+                
         if st.button("🚀 Run Agents"):
-            # 1. RAG Retrieval
-            query_text = topic if not file_text else file_text[:500]
-            ctx_list = rag.query_context(query_text)
-            context_str = "\n".join(ctx_list) if ctx_list else "No existing cards found."
+            # 1. RAG Retrieval / Direct Context
+            context_str = "Existing Artworks: " + ", ".join(existing_titles) if existing_titles else "No existing artworks found."
+
             
             # 2. Agent 1: Gap Analysis (Now returns Persona too)
             with st.status("🕵️ Analyzing Context...", expanded=True) as status:
-                missing_concepts, persona = agents.analyze_knowledge_gaps(topic, context_str, source_text=file_text)
+                missing_concepts, persona = agents.analyze_knowledge_gaps(topic, context_str, source_text=file_text, num=num)
                 
                 # Show the user the detected persona
                 status.write(f"🤖 AI Persona Adopted: **{persona}**")
@@ -180,8 +171,13 @@ with tab_gen:
                             continue
                         
                         if ftype == "Image" and "img src" not in val:
-                            status_box.info(f"🖼️ Searching: '{val}'")
-                            candidates = media.search_images(val)
+                            search_query = val
+                            # Append Artist name for better search accuracy
+                            if "Artist" in note_fields and len(note_fields["Artist"]) > 1:
+                                search_query = f"{val} by {note_fields['Artist']}"
+                                
+                            status_box.info(f"🖼️ Searching: '{search_query}'")
+                            candidates = media.search_images(search_query)
                             if candidates:
                                 fname = media.download_image_candidates(candidates)
                                 if fname: note_fields[f] = f'<img src="{fname}">'
