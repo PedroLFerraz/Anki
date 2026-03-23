@@ -5,21 +5,23 @@ __pycache__/
 venv/
 .venv/
 env/
-.venv/
 .env
 setup.py
+
+# Data (runtime generated)
+data/
+anki_vector_store/
+anki_matrix.pkl
+anki_notes.pkl
+anki_vectorizer.pkl
+anki_analytics.db
 data.txt
 prompt_anki.txt
 
-# Streamlit
+# Streamlit (legacy)
 .streamlit/secrets.toml
 
 # IDE
 .vscode/
 .idea/
 .DS_Store
-anki_vector_store/
-anki_matrix.pkl
-anki_notes.pkl
-anki_vectorizer.pkl
-anki_analytics.db
