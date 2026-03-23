@@ -2,32 +2,36 @@ import difflib
 import logging
 
 import numpy as np
-import google.generativeai as genai
+from google import genai
 
 from core.config import settings
 
 logger = logging.getLogger(__name__)
 
+_client = None
 
-def _configure():
+
+def _get_client() -> genai.Client | None:
+    global _client
     if not settings.google_api_key:
-        return False
-    genai.configure(api_key=settings.google_api_key)
-    return True
+        return None
+    if _client is None:
+        _client = genai.Client(api_key=settings.google_api_key)
+    return _client
 
 
 def get_embedding(text: str) -> np.ndarray | None:
     """Get embedding vector for text using Gemini embedding API."""
-    if not _configure() or not text.strip():
+    client = _get_client()
+    if not client or not text.strip():
         return None
 
     try:
-        result = genai.embed_content(
+        result = client.models.embed_content(
             model=settings.embedding_model,
-            content=text,
-            task_type="SEMANTIC_SIMILARITY",
+            contents=text,
         )
-        return np.array(result["embedding"], dtype=np.float32)
+        return np.array(result.embeddings[0].values, dtype=np.float32)
     except Exception as e:
         logger.warning("Embedding generation failed: %s", e)
         return None
@@ -46,7 +50,6 @@ def fuzzy_match(text_a: str, text_b: str, threshold: float = 0.85) -> bool:
     """Check if two strings are fuzzy matches (for title/artist dedup)."""
     a = text_a.lower().strip()
     b = text_b.lower().strip()
-    # Strip common articles
     for article in ["the ", "a ", "an ", "la ", "le ", "el "]:
         if a.startswith(article):
             a = a[len(article):]

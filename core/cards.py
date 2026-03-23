@@ -26,9 +26,14 @@ class GenerationRun(BaseModel):
     total_accepted: int = 0
 
 
+class CardTemplate(BaseModel):
+    name: str
+    front: str
+    back: str
+
+
 class DeckType(BaseModel):
     name: str
     fields_schema: list[dict]  # [{"name": "Title", "type": "Text"}, ...]
-    front_template: str
-    back_template: str
+    templates: list[CardTemplate]
     css: str

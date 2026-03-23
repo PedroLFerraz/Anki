@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     google_api_key: str = ""
     db_path: str = str(DATA_DIR / "anki_generator.db")
     gemini_model: str = "gemini-2.5-flash-lite"
-    embedding_model: str = "models/text-embedding-004"
+    embedding_model: str = "gemini-embedding-001"
 
     class Config:
         env_file = str(BASE_DIR / ".env")

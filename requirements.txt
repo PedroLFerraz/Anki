@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 genanki
-google-generativeai
+google-genai
 python-dotenv
 pydantic
 pydantic-settings
@@ -10,3 +10,4 @@ duckduckgo-search
 pypdf
 numpy
 requests
+python-multipart

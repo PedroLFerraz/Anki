@@ -2,41 +2,78 @@ import sqlite3
 import json
 from core.config import settings
 
+# Exact match of the real "Great Works of Art" deck from the user's .apkg
 ARTWORK_DECK_TYPE = {
     "name": "artwork",
     "fields_schema": json.dumps([
         {"name": "Artwork", "type": "Image"},
         {"name": "Artist", "type": "Text"},
-        {"name": "Nationality", "type": "Text"},
         {"name": "Title", "type": "Text"},
+        {"name": "Subtitle/Alternate Titles", "type": "Text"},
+        {"name": "Title in Original Language", "type": "Text"},
         {"name": "Date", "type": "Text"},
         {"name": "Period/Movement", "type": "Text"},
-        {"name": "Permanent Location", "type": "Text"},
+        {"name": "Medium", "type": "Text"},
+        {"name": "Nationality", "type": "Text"},
         {"name": "Note", "type": "Text"},
+        {"name": "Image Source", "type": "(Skip)"},
+        {"name": "Image copyright information", "type": "(Skip)"},
+        {"name": "Permanent Location", "type": "Text"},
+        {"name": "Instructive Link(s)", "type": "(Skip)"},
+        {"name": "Gallery/Museum Link(s)", "type": "(Skip)"},
     ]),
-    "front_template": "<div style='font-family: Times; font-size: 24px; color: white'> Artist?</div>\n{{Artwork}}",
-    "back_template": (
-        "{{Artwork}}\n\n<hr id='answer'>\n"
-        "<div style='font-family: Times; font-size: 30px; color: yellow'>{{Artist}}</div>\n"
-        "<div style='font-size: 16px; color: #99CCFF'>({{Nationality}})\n<br>\n</br>\n"
-        "<div style='font-family: Times; font-size: 16px; color: #99CCFF'> \"{{Title}}\"\n"
-        "<div style='font-family: Times; font-size: 14px; color: #99CCFF'> \n"
-        "{{#Date}}<div style='font-family: Times; font-size: 12px; color: #99CCFF'>({{Date}})</div>{{/Date}}\n"
-        "<br>\n{{Period/Movement}}\n<br>\n{{Permanent Location}}\n<br>\n<br>\n"
-        "<div style='font-family: Times; font-size: 16px; color: white'>{{Note}}</div>"
-    ),
+    "templates": json.dumps([
+        {
+            "name": "Artist?",
+            "front": (
+                "<div style='font-family: Times; font-size: 24px; color: white'> Artist?</div>\n"
+                "{{Artwork}}"
+            ),
+            "back": (
+                "{{Artwork}}\n\n"
+                "<hr id='answer'>\n"
+                "<div style='font-family: Times; font-size: 30px; color: yellow'>{{Artist}}</div>\n"
+                "<div style='font-size: 16px; color: #99CCFF'>({{Nationality}})\n"
+                "<br>\n</br>\n"
+                "<div style='font-family: Times; font-size: 16px; color: #99CCFF'> \"{{Title}}\"\n"
+                "<div style='font-family: Times; font-size: 14px; color: #99CCFF'> \n"
+                "{{#Date}}<div style='font-family: Times; font-size: 12px; color: #99CCFF'>"
+                "({{Date}})</div>{{/Date}}\n"
+                "<br>\n{{Period/Movement}}\n<br>\n{{Permanent Location}}\n<br>\n<br>\n"
+                "<div style='font-family: Times; font-size: 16px; color: white'>{{Note}}</div>"
+            ),
+        },
+        {
+            "name": "Title?",
+            "front": (
+                "<div style='font-family: Times; font-size: 24px; color: white'> Title?</div>\n"
+                "{{Artwork}}"
+            ),
+            "back": (
+                "{{Artwork}}\n\n"
+                "<hr id='answer'>\n"
+                "<div style='font-family: Times; font-size: 30px; color: yellow'>\"{{Title}}\"</div>\n"
+                "<div style='font-family: Times; font-size: 20px; color: yellow'>({{Date}})</div>\n"
+                "<div style='font-family: Times; font-size: 12px; color: yellow;'>"
+                "{{Subtitle/Alternate Titles}}</div>\n"
+                "<br>\n"
+                "<div style='font-family: Times; font-size: 16px; color: #99CCFF'> {{Artist}}\n"
+                "<div style='font-size: 16px; color: #99CCFF'>({{Nationality}})\n"
+                "<br>\n<br>\n{{Period/Movement}}\n<br>\n{{Permanent Location}}\n<br>\n<br>\n"
+                "<div style='font-family: Times; font-size: 16px; color: white'>{{Note}}</div>"
+            ),
+        },
+    ]),
     "css": """.card {
  font-family: times;
  font-size: 24px;
  text-align: center;
  color: yellow;
- background-color: black;
-}
+background-color: black }
 
-.card1 { background-color: #003366; }
-.card2 { background-color: #336633; }
-.card3 { background-color: #663333; }
-""",
+.card1 { background-color: #003366 }
+.card2 { background-color: #336633 }
+.card3 { background-color: #663333 }""",
 }
 
 
@@ -51,8 +88,7 @@ def init_db():
     c.execute("""CREATE TABLE IF NOT EXISTS deck_types (
         name TEXT PRIMARY KEY,
         fields_schema TEXT NOT NULL,
-        front_template TEXT NOT NULL,
-        back_template TEXT NOT NULL,
+        templates TEXT NOT NULL,
         css TEXT NOT NULL
     )""")
 
@@ -86,12 +122,11 @@ def init_db():
 
     # Seed artwork deck type
     c.execute(
-        "INSERT OR IGNORE INTO deck_types (name, fields_schema, front_template, back_template, css) VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO deck_types (name, fields_schema, templates, css) VALUES (?, ?, ?, ?)",
         (
             ARTWORK_DECK_TYPE["name"],
             ARTWORK_DECK_TYPE["fields_schema"],
-            ARTWORK_DECK_TYPE["front_template"],
-            ARTWORK_DECK_TYPE["back_template"],
+            ARTWORK_DECK_TYPE["templates"],
             ARTWORK_DECK_TYPE["css"],
         ),
     )

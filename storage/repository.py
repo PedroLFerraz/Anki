@@ -3,7 +3,7 @@ import sqlite3
 
 import numpy as np
 
-from core.cards import Card, DeckType, GenerationRun
+from core.cards import Card, CardTemplate, DeckType, GenerationRun
 from storage.database import get_connection
 
 
@@ -12,30 +12,36 @@ from storage.database import get_connection
 def get_deck_type(name: str) -> DeckType | None:
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT name, fields_schema, front_template, back_template, css FROM deck_types WHERE name = ?", (name,))
+    c.execute("SELECT name, fields_schema, templates, css FROM deck_types WHERE name = ?", (name,))
     row = c.fetchone()
     conn.close()
     if not row:
         return None
+    templates_raw = json.loads(row[2])
     return DeckType(
         name=row[0],
         fields_schema=json.loads(row[1]),
-        front_template=row[2],
-        back_template=row[3],
-        css=row[4],
+        templates=[CardTemplate(**t) for t in templates_raw],
+        css=row[3],
     )
 
 
 def get_all_deck_types() -> list[DeckType]:
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT name, fields_schema, front_template, back_template, css FROM deck_types")
+    c.execute("SELECT name, fields_schema, templates, css FROM deck_types")
     rows = c.fetchall()
     conn.close()
-    return [
-        DeckType(name=r[0], fields_schema=json.loads(r[1]), front_template=r[2], back_template=r[3], css=r[4])
-        for r in rows
-    ]
+    result = []
+    for r in rows:
+        templates_raw = json.loads(r[2])
+        result.append(DeckType(
+            name=r[0],
+            fields_schema=json.loads(r[1]),
+            templates=[CardTemplate(**t) for t in templates_raw],
+            css=r[3],
+        ))
+    return result
 
 
 # --- Cards ---
