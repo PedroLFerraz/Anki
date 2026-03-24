@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime
 
 
@@ -34,6 +34,8 @@ class CardTemplate(BaseModel):
 
 class DeckType(BaseModel):
     name: str
-    fields_schema: list[dict]  # [{"name": "Title", "type": "Text"}, ...]
-    templates: list[CardTemplate]
+    fields_schema: List[dict]  # [{"name": "Title", "type": "Text"}, ...]
+    templates: List[CardTemplate]
     css: str
+    anki_model_id: Optional[int] = None  # Real Anki model ID from imported .apkg
+    anki_deck_id: Optional[int] = None   # Real Anki deck ID from imported .apkg

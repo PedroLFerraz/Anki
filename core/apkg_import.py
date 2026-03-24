@@ -1,4 +1,5 @@
 """Import cards from an existing .apkg file into the SQLite database for dedup awareness."""
+from __future__ import annotations
 
 import json
 import logging
@@ -75,6 +76,32 @@ def _get_art_fields(conn: sqlite3.Connection) -> tuple[int | None, list[str]]:
     return None, []
 
 
+def _get_deck_id(conn: sqlite3.Connection) -> int | None:
+    """Extract the real Anki deck ID from the database."""
+    c = conn.cursor()
+
+    # Modern schema: decks table
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='decks'")
+    if c.fetchone():
+        c.execute("SELECT id FROM decks WHERE id != 1")  # Skip default deck
+        row = c.fetchone()
+        if row:
+            return row[0]
+
+    # Legacy schema: col.decks JSON
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='col'")
+    if c.fetchone():
+        c.execute("SELECT decks FROM col")
+        row = c.fetchone()
+        if row and row[0]:
+            decks = json.loads(row[0])
+            for did, d in decks.items():
+                if int(did) != 1:  # Skip default deck
+                    return int(did)
+
+    return None
+
+
 def import_apkg(
     apkg_path: str,
     deck_type: str = "artwork",
@@ -95,6 +122,12 @@ def import_apkg(
     if ntid is None:
         conn.close()
         return {"error": "No artwork note type found in .apkg"}
+
+    # Extract real Anki IDs so exports merge into this deck
+    real_deck_id = _get_deck_id(conn)
+    if ntid and real_deck_id:
+        repository.update_deck_type_anki_ids(deck_type, model_id=ntid, deck_id=real_deck_id)
+        logger.info("Saved Anki IDs: model=%d, deck=%d", ntid, real_deck_id)
 
     # Get all notes
     c.execute("SELECT flds FROM notes WHERE mid=?", (ntid,))
