@@ -97,6 +97,15 @@ def save_card(card: Card, embedding: np.ndarray | None = None) -> int:
     return card_id
 
 
+def save_card_fields(card_id: int, fields_json: dict):
+    """Update the fields_json for a card (e.g., to add a search link)."""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE cards SET fields_json = ? WHERE id = ?", (json.dumps(fields_json), card_id))
+    conn.commit()
+    conn.close()
+
+
 def update_card_status(card_id: int, status: str):
     conn = get_connection()
     c = conn.cursor()

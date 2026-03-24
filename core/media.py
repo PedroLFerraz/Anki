@@ -444,37 +444,50 @@ def _is_likely_painting_filename(file_title: str) -> bool:
     return False
 
 
-def search_images(title: str = "", artist: str = "", query: str = "") -> list[str]:
+def _google_images_url(title: str, artist: str) -> str:
+    """Generate a Google Images search URL for manual lookup."""
+    query = f"{title} {artist} painting".strip()
+    return f"https://www.google.com/search?tbm=isch&q={quote(query)}"
+
+
+def search_images(title: str = "", artist: str = "", query: str = "") -> tuple[list[str], bool]:
     """
     Master image search — tries multiple sources in order of reliability.
-    Returns a list of image URLs, best candidates first.
 
-    For artwork cards, pass title + artist for best results.
-    For generic searches, pass query.
+    Returns (urls, is_verified):
+      - urls: list of image URLs, best candidates first
+      - is_verified: True if we found the painting from a trusted structured
+        source (Wikidata). False means results are from generic search and
+        may not be the actual painting (likely copyrighted).
     """
     all_candidates = []
+    is_verified = False
     search_text = f"{title} {artist}".strip() if title else query
 
     if not search_text:
-        return []
+        return [], False
 
     # Source 1: Wikidata (best — structured data with exact painting image P18)
     if title:
         wikidata_results = search_wikidata(title, artist)
         if wikidata_results:
-            logger.info("Found %d images via Wikidata for '%s'", len(wikidata_results), search_text)
+            logger.info("Found %d verified images via Wikidata for '%s'", len(wikidata_results), search_text)
             all_candidates.extend(wikidata_results)
+            is_verified = True  # Wikidata P18 = confirmed painting image
+
+    # If Wikidata found it, we're done — that's the real painting
+    if is_verified:
+        return all_candidates, True
 
     # Source 2: Wikimedia Commons search (good breadth, art-scored)
-    if len(all_candidates) < 2:
-        commons_results = search_wikimedia(search_text, title=title, artist=artist)
-        if commons_results:
-            logger.info("Found %d images via Wikimedia Commons for '%s'", len(commons_results), search_text)
-            for url in commons_results:
-                if url not in all_candidates:
-                    all_candidates.append(url)
+    commons_results = search_wikimedia(search_text, title=title, artist=artist)
+    if commons_results:
+        logger.info("Found %d images via Wikimedia Commons for '%s'", len(commons_results), search_text)
+        for url in commons_results:
+            if url not in all_candidates:
+                all_candidates.append(url)
 
-    # Source 3: Wikipedia article images (useful for less-indexed paintings)
+    # Source 3: Wikipedia article images
     if title and len(all_candidates) < 2:
         wiki_results = search_wikipedia(title, artist)
         if wiki_results:
@@ -483,8 +496,7 @@ def search_images(title: str = "", artist: str = "", query: str = "") -> list[st
                 if url not in all_candidates:
                     all_candidates.append(url)
 
-    # Source 4: DuckDuckGo (fallback — many modern paintings are copyrighted
-    # and not on Wikimedia, so DDG may be the only source)
+    # Source 4: DuckDuckGo (fallback)
     if len(all_candidates) < 2:
         ddg_results = search_duckduckgo(search_text)
         if ddg_results:
@@ -494,9 +506,10 @@ def search_images(title: str = "", artist: str = "", query: str = "") -> list[st
                     all_candidates.append(url)
 
     if not all_candidates:
-        logger.warning("No images found for '%s'", search_text)
+        logger.warning("No images found for '%s' — painting is likely copyrighted", search_text)
 
-    return all_candidates
+    # Non-Wikidata results are NOT verified — could be wrong images
+    return all_candidates, False
 
 
 # --- 2. DOWNLOADER ---
@@ -566,34 +579,45 @@ def generate_audio(text: str, lang: str = "en") -> tuple[str, bytes] | None:
 
 # --- 4. BATCH OPERATIONS ---
 
-def _fetch_single_image(card_id: int, title: str, artist: str) -> tuple[int, str | None]:
-    """Search + download image for a single card. Returns (card_id, filename)."""
+def _fetch_single_image(card_id: int, title: str, artist: str) -> tuple[int, str | None, bool]:
+    """
+    Search + download image for a single card.
+    Returns (card_id, filename_or_none, is_verified).
+    If not verified, the image may not be the actual painting.
+    """
     try:
-        urls = search_images(title=title, artist=artist)
-        if urls:
+        urls, is_verified = search_images(title=title, artist=artist)
+        if urls and is_verified:
+            # Verified painting image — download it
             result = download_image(urls)
             if result:
-                return card_id, result[0]
+                return card_id, result[0], True
+        elif urls and not is_verified:
+            # Unverified — don't download, the image is probably wrong
+            logger.info("Skipping unverified images for '%s' by '%s' (likely copyrighted)", title, artist)
+            return card_id, None, False
     except Exception as e:
         logger.warning("Image fetch failed for card %d: %s", card_id, e)
-    return card_id, None
+    return card_id, None, False
 
 
 def fetch_images_batch(
     tasks: list[tuple[int, str, str]],
-    max_workers: int = 2,
+    max_workers: int = 1,
     on_progress: callable = None,
-) -> dict[int, str | None]:
+) -> dict[int, tuple[str | None, bool]]:
     """
-    Fetch images for multiple cards in parallel.
+    Fetch images for multiple cards.
 
     Args:
         tasks: list of (card_id, title, artist) tuples
-        max_workers: number of parallel downloads (keep low to be nice to APIs)
+        max_workers: number of parallel downloads
         on_progress: callback(card_id, filename, done_count, total)
 
     Returns:
-        dict mapping card_id -> filename (or None if failed)
+        dict mapping card_id -> (filename_or_none, is_verified)
+        When is_verified=False and filename=None, the painting is likely
+        copyrighted and a search link should be used instead.
     """
     results = {}
     total = len(tasks)
@@ -605,9 +629,9 @@ def fetch_images_batch(
         }
 
         for i, future in enumerate(as_completed(futures), 1):
-            card_id, filename = future.result()
-            results[card_id] = filename
+            card_id, filename, verified = future.result()
+            results[card_id] = (filename, verified)
             if on_progress:
-                on_progress(card_id, filename, i, total)
+                on_progress(card_id, filename, verified, i, total)
 
     return results

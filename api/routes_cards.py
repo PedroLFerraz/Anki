@@ -57,19 +57,29 @@ def fetch_media_for_card(card_id: int, audio_lang: str = "en"):
         raise HTTPException(status_code=404, detail="Card not found")
 
     fields = card.fields_json
-    result = {"image": None, "audio": None}
+    result = {"image": None, "audio": None, "copyrighted": False}
 
     # Image: use Title + Artist for precise artwork search
     title = fields.get("Title", "")
     artist = fields.get("Artist", "")
     if title or artist:
-        urls = media.search_images(title=title, artist=artist)
-        if urls:
+        urls, is_verified = media.search_images(title=title, artist=artist)
+        if urls and is_verified:
             img_result = media.download_image(urls)
             if img_result:
                 filename, _ = img_result
                 repository.update_card_media(card_id, image_filename=filename)
                 result["image"] = filename
+        elif not is_verified:
+            # Copyrighted painting — add search link instead
+            search_url = media._google_images_url(title, artist)
+            fields["Artwork"] = (
+                f'<a href="{search_url}">'
+                f'[Copyrighted] Click to search for "{title}" by {artist}</a>'
+            )
+            repository.save_card_fields(card_id, fields)
+            result["copyrighted"] = True
+            result["search_url"] = search_url
 
     # Audio: use artist name
     audio_text = fields.get("Artist", "") or fields.get("Title", "")

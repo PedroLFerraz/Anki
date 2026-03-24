@@ -173,23 +173,44 @@ def cmd_generate(args):
                 image_tasks.append((card.id, title, artist))
 
         if image_tasks:
-            def on_progress(card_id, filename, done, total):
-                status = filename if filename else "not found"
-                print(f"  [{done}/{total}] Card {card_id}: {status}")
+            def on_progress(card_id, filename, verified, done, total):
+                if filename:
+                    print(f"  [{done}/{total}] Card {card_id}: {filename}")
+                elif not verified:
+                    print(f"  [{done}/{total}] Card {card_id}: copyrighted - search link added")
+                else:
+                    print(f"  [{done}/{total}] Card {card_id}: not found")
 
-            print(f"\nFetching {len(image_tasks)} images (sequential to avoid rate limits)...")
+            print(f"\nFetching {len(image_tasks)} images...")
             results = media.fetch_images_batch(image_tasks, max_workers=1, on_progress=on_progress)
 
-            for card_id, filename in results.items():
+            found = 0
+            copyrighted = 0
+            for card_id, (filename, verified) in results.items():
                 if filename:
                     repository.update_card_media(card_id, image_filename=filename)
-                    # Update card object for export
                     for card, _, _ in saved:
                         if card.id == card_id:
                             card.image_filename = filename
+                    found += 1
+                elif not verified:
+                    # No verified image found — painting is likely copyrighted.
+                    # Put a Google Images search link in the Artwork field so
+                    # the user can find and save the image manually.
+                    for card, _, _ in saved:
+                        if card.id == card_id:
+                            title = card.fields_json.get("Title", "")
+                            artist = card.fields_json.get("Artist", "")
+                            search_url = media._google_images_url(title, artist)
+                            card.fields_json["Artwork"] = (
+                                f'<a href="{search_url}">'
+                                f'[Copyrighted] Click to search for "{title}" by {artist}</a>'
+                            )
+                            # Update in DB too
+                            repository.save_card_fields(card.id, card.fields_json)
+                    copyrighted += 1
 
-            found = sum(1 for f in results.values() if f)
-            print(f"  Found {found}/{len(image_tasks)} images")
+            print(f"  Images: {found} downloaded, {copyrighted} copyrighted (search links added)")
 
     # Export
     do_export = input("\nExport to .apkg now? [Y/n] ").strip().lower()
