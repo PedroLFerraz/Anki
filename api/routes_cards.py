@@ -73,9 +73,9 @@ def fetch_media_for_card(card_id: int, audio_lang: str = "en"):
         elif not is_verified:
             # Copyrighted painting — add search link instead
             search_url = media._google_images_url(title, artist)
-            fields["Artwork"] = (
+            fields["Note"] = (
                 f'<a href="{search_url}">'
-                f'[Copyrighted] Click to search for "{title}" by {artist}</a>'
+                f'[Copyrighted] Search for "{title}" by {artist}</a>'
             )
             repository.save_card_fields(card_id, fields)
             result["copyrighted"] = True

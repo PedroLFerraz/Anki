@@ -17,6 +17,12 @@ class GenerateRequest(BaseModel):
     deck_type: str = "artwork"
 
 
+class ArtistRequest(BaseModel):
+    artist_name: str
+    deck_type: str = "artwork"
+    limit: int = 0
+
+
 @router.post("/generate")
 def generate_cards(req: GenerateRequest):
     """Run the 3-agent pipeline and return generated cards."""
@@ -86,6 +92,61 @@ def generate_cards(req: GenerateRequest):
         "persona": persona,
         "gap_analysis": missing_concepts,
         "cards": saved_cards,
+    }
+
+
+@router.post("/generate/artist")
+def generate_from_artist(req: ArtistRequest):
+    """Look up real paintings by artist on Wikidata and create cards."""
+    from core.wikidata import query_artist_artworks, artworks_to_card_fields
+
+    dt = repository.get_deck_type(req.deck_type)
+    if not dt:
+        return {"error": f"Unknown deck type: {req.deck_type}"}
+
+    artworks = query_artist_artworks(req.artist_name)
+    if not artworks:
+        return {"error": f"No artworks found on Wikidata for '{req.artist_name}'"}
+
+    if req.limit > 0:
+        artworks = artworks[:req.limit]
+
+    # Filter out paintings already in the deck
+    existing_cards = repository.get_cards(deck_type=req.deck_type)
+    existing_titles = {c.fields_json.get("Title", "").strip().lower() for c in existing_cards}
+
+    new_artworks = [a for a in artworks if a["title"].strip().lower() not in existing_titles]
+
+    if not new_artworks:
+        return {
+            "cards": [],
+            "message": "All paintings from this artist are already in the deck",
+            "total_found": len(artworks),
+            "skipped": len(artworks),
+        }
+
+    card_fields_list = artworks_to_card_fields(new_artworks, req.artist_name)
+
+    # Save cards
+    saved_cards = []
+    for fields in card_fields_list:
+        card = Card(
+            deck_type=req.deck_type, fields_json=fields,
+            source_topic=req.artist_name, status="GENERATED",
+        )
+        card_id = repository.save_card(card)
+        saved_cards.append({
+            "id": card_id,
+            "fields": fields,
+            "status": "GENERATED",
+            "has_free_image": bool(fields.get("Image Source")),
+        })
+
+    return {
+        "cards": saved_cards,
+        "total_found": len(artworks),
+        "skipped": len(artworks) - len(new_artworks),
+        "new": len(new_artworks),
     }
 
 

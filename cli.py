@@ -195,22 +195,21 @@ def cmd_generate(args):
                     found += 1
                 elif not verified:
                     # No verified image found — painting is likely copyrighted.
-                    # Put a Google Images search link in the Artwork field so
-                    # the user can find and save the image manually.
+                    # Put a Google Images search link in the Note field
+                    # (not Artwork, which is Image-typed and won't render <a> tags).
                     for card, _, _ in saved:
                         if card.id == card_id:
                             title = card.fields_json.get("Title", "")
                             artist = card.fields_json.get("Artist", "")
                             search_url = media._google_images_url(title, artist)
-                            card.fields_json["Artwork"] = (
+                            card.fields_json["Note"] = (
                                 f'<a href="{search_url}">'
-                                f'[Copyrighted] Click to search for "{title}" by {artist}</a>'
+                                f'[Copyrighted] Search for "{title}" by {artist}</a>'
                             )
-                            # Update in DB too
                             repository.save_card_fields(card.id, card.fields_json)
                     copyrighted += 1
 
-            print(f"  Images: {found} downloaded, {copyrighted} copyrighted (search links added)")
+            print(f"  Images: {found} downloaded, {copyrighted} copyrighted (search links in Note)")
 
     # Export
     do_export = input("\nExport to .apkg now? [Y/n] ").strip().lower()
@@ -253,6 +252,161 @@ def cmd_import(args):
     if "error" in stats:
         print(f"Error: {stats['error']}")
         sys.exit(1)
+
+
+def cmd_artist(args):
+    """Look up an artist's real paintings on Wikidata and create cards."""
+    from core.wikidata import query_artist_artworks, artworks_to_card_fields
+
+    deck_type_name = args.deck_type
+    dt = repository.get_deck_type(deck_type_name)
+    if not dt:
+        print(f"Error: Unknown deck type '{deck_type_name}'")
+        sys.exit(1)
+
+    print(f"\nSearching Wikidata for artworks by '{args.artist_name}'...")
+    artworks = query_artist_artworks(args.artist_name)
+
+    if not artworks:
+        print("No artworks found on Wikidata for this artist.")
+        print("Try the exact name as it appears on Wikipedia (e.g. 'Claude Monet', not 'Monet').")
+        return
+
+    with_img = sum(1 for a in artworks if a["image_url"])
+    print(f"Found {len(artworks)} artworks ({with_img} with free images).")
+
+    # Apply limit
+    if args.limit and args.limit < len(artworks):
+        artworks = artworks[:args.limit]
+        print(f"Showing first {args.limit}.")
+
+    # Filter out paintings already in the deck
+    existing_cards = repository.get_cards(deck_type=deck_type_name)
+    existing_titles = {c.fields_json.get("Title", "").strip().lower() for c in existing_cards}
+
+    new_artworks = []
+    skipped = 0
+    for art in artworks:
+        if art["title"].strip().lower() in existing_titles:
+            skipped += 1
+        else:
+            new_artworks.append(art)
+
+    if skipped:
+        print(f"Skipped {skipped} already in deck.")
+
+    if not new_artworks:
+        print("All paintings from this artist are already in the deck!")
+        return
+
+    # Convert to card fields
+    card_fields_list = artworks_to_card_fields(new_artworks, args.artist_name)
+
+    # Display
+    print(f"\n{'='*60}")
+    print(f"{len(new_artworks)} new paintings:\n")
+
+    skip_fields = {f["name"] for f in dt.fields_schema if f["type"] == "(Skip)"}
+    for idx, (art, fields) in enumerate(zip(new_artworks, card_fields_list)):
+        img_tag = "[IMG]" if art["image_url"] else "[no img]"
+        print(f"--- {idx + 1}. {art['title']} {img_tag} ---")
+        for key, val in fields.items():
+            if key in skip_fields or not val or key == "Artwork":
+                continue
+            print(f"  {key}: {val}")
+        print()
+
+    # Interactive accept/reject
+    answer = input(f"Accept all {len(new_artworks)} cards? [Y/n/pick] ").strip().lower()
+
+    accepted_indices = []
+    if answer in ("", "y", "yes"):
+        accepted_indices = list(range(len(new_artworks)))
+    elif answer == "pick":
+        for idx in range(len(new_artworks)):
+            choice = input(f"  Accept '{new_artworks[idx]['title']}'? [Y/n] ").strip().lower()
+            if choice in ("", "y", "yes"):
+                accepted_indices.append(idx)
+    else:
+        print("No cards accepted.")
+        return
+
+    if not accepted_indices:
+        print("No cards accepted.")
+        return
+
+    # Save accepted cards to DB
+    saved_cards = []
+    for idx in accepted_indices:
+        fields = card_fields_list[idx]
+        card = Card(
+            deck_type=deck_type_name, fields_json=fields,
+            source_topic=args.artist_name, status="ACCEPTED",
+        )
+        card_id = repository.save_card(card)
+        card.id = card_id
+        saved_cards.append((card, new_artworks[idx]))
+
+    print(f"\nAccepted {len(saved_cards)} cards.")
+
+    # Fetch images
+    fetch = input("Fetch images? [Y/n] ").strip().lower()
+    if fetch in ("", "y", "yes"):
+        image_tasks = []
+        for card, art in saved_cards:
+            title = card.fields_json.get("Title", "")
+            artist = card.fields_json.get("Artist", "")
+            if title or artist:
+                image_tasks.append((card.id, title, artist))
+
+        if image_tasks:
+            def on_progress(card_id, filename, verified, done, total):
+                if filename:
+                    print(f"  [{done}/{total}] Card {card_id}: {filename}")
+                elif not verified:
+                    print(f"  [{done}/{total}] Card {card_id}: copyrighted - search link added")
+                else:
+                    print(f"  [{done}/{total}] Card {card_id}: not found")
+
+            print(f"\nFetching {len(image_tasks)} images...")
+            results = media.fetch_images_batch(image_tasks, max_workers=1, on_progress=on_progress)
+
+            found = 0
+            copyrighted = 0
+            for card_id, (filename, verified) in results.items():
+                if filename:
+                    repository.update_card_media(card_id, image_filename=filename)
+                    for card, _ in saved_cards:
+                        if card.id == card_id:
+                            card.image_filename = filename
+                    found += 1
+                elif not verified:
+                    for card, _ in saved_cards:
+                        if card.id == card_id:
+                            title = card.fields_json.get("Title", "")
+                            artist = card.fields_json.get("Artist", "")
+                            search_url = media._google_images_url(title, artist)
+                            card.fields_json["Note"] = (
+                                f'<a href="{search_url}">'
+                                f'[Copyrighted] Search for "{title}" by {artist}</a>'
+                            )
+                            repository.save_card_fields(card.id, card.fields_json)
+                    copyrighted += 1
+
+            print(f"  Images: {found} downloaded, {copyrighted} copyrighted (search links in Note)")
+
+    # Export
+    do_export = input("\nExport to .apkg now? [Y/n] ").strip().lower()
+    if do_export in ("", "y", "yes"):
+        accepted_cards = repository.get_cards(deck_type=deck_type_name, status="ACCEPTED")
+        if accepted_cards:
+            path = export_cards(accepted_cards, dt, deck_name=args.deck_name)
+            for c in accepted_cards:
+                repository.update_card_status(c.id, "EXPORTED")
+            print(f"\nExported to: {path}")
+            print("Import this file into Anki: File > Import")
+        else:
+            print("No accepted cards to export.")
 
 
 def cmd_export(args):
@@ -298,6 +452,13 @@ def main():
     imp.add_argument("--deck-type", "-t", default="artwork")
     imp.add_argument("--no-embeddings", action="store_true", help="Skip embedding computation (faster but no semantic dedup)")
 
+    # artist (Wikidata lookup)
+    art = subparsers.add_parser("artist", help="Look up real paintings by artist name (via Wikidata)")
+    art.add_argument("artist_name", help="Artist name (e.g. 'Claude Monet')")
+    art.add_argument("--limit", "-n", type=int, default=0, help="Max paintings to show (0 = all)")
+    art.add_argument("--deck-type", "-t", default="artwork", help="Deck type (default: artwork)")
+    art.add_argument("--deck-name", "-d", default="Great Works of Art", help="Deck name in Anki")
+
     # export
     exp = subparsers.add_parser("export", help="Export cards to .apkg")
     exp.add_argument("--deck-type", "-t", default="artwork")
@@ -312,6 +473,8 @@ def main():
         cmd_list(args)
     elif args.command == "import":
         cmd_import(args)
+    elif args.command == "artist":
+        cmd_artist(args)
     elif args.command == "export":
         cmd_export(args)
     else:
