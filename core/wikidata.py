@@ -1,8 +1,12 @@
 """
-Query Wikidata SPARQL endpoint for artworks by a given artist.
+Query Wikidata SPARQL endpoint for artworks by artist or topic.
 
 Replaces LLM-based card generation for artwork decks with verified
-structured data from Wikidata.
+structured data from Wikidata. Supports queries by:
+- Artist name (e.g. "Claude Monet")
+- Art movement (e.g. "Impressionism")
+- Museum/location (e.g. "Louvre")
+- Time period (e.g. "1800s", "19th century")
 """
 from __future__ import annotations
 
@@ -78,6 +82,155 @@ ORDER BY ?date
 """
 
 
+# --- Topic-based SPARQL templates ---
+
+# Query artworks by entity ID (movement, location, or genre)
+# Uses {property} to select which relationship to follow
+SPARQL_BY_ENTITY = """
+SELECT DISTINCT ?artwork ?artworkLabel ?image ?date
+       ?medium ?mediumLabel ?location ?locationLabel
+       ?movement ?movementLabel
+       ?artist ?artistLabel ?nationality ?nationalityLabel
+WHERE {{
+  ?artwork wdt:{property} wd:{entity_id} .
+  ?artwork wdt:P31 ?type .
+  VALUES ?type {{ {artwork_types} }}
+  ?artwork wdt:P170 ?artist .
+  OPTIONAL {{ ?artwork wdt:P18 ?image . }}
+  OPTIONAL {{ ?artwork wdt:P571 ?date . }}
+  OPTIONAL {{ ?artwork wdt:P186 ?medium . }}
+  OPTIONAL {{ ?artwork wdt:P276 ?location . }}
+  OPTIONAL {{ ?artwork wdt:P135 ?movement . }}
+  OPTIONAL {{ ?artist wdt:P27 ?nationality . }}
+  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,pt,es,fr" . }}
+}}
+ORDER BY ?date
+LIMIT {limit}
+"""
+
+SPARQL_BY_PERIOD = """
+SELECT DISTINCT ?artwork ?artworkLabel ?image ?date
+       ?medium ?mediumLabel ?location ?locationLabel
+       ?movement ?movementLabel
+       ?artist ?artistLabel ?nationality ?nationalityLabel
+WHERE {{
+  ?artwork wdt:P31 wd:Q3305213 .
+  ?artwork wdt:P170 ?artist .
+  ?artwork wdt:P571 ?date .
+  ?artwork wdt:P18 ?image .
+  FILTER(YEAR(?date) >= {year_start} && YEAR(?date) < {year_end})
+  OPTIONAL {{ ?artwork wdt:P186 ?medium . }}
+  OPTIONAL {{ ?artwork wdt:P276 ?location . }}
+  OPTIONAL {{ ?artwork wdt:P135 ?movement . }}
+  OPTIONAL {{ ?artist wdt:P27 ?nationality . }}
+  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,pt,es,fr" . }}
+}}
+ORDER BY ?date
+LIMIT {limit}
+"""
+
+# Properties that link artworks to topics
+# P135 = movement, P276 = location, P136 = genre, P195 = collection
+TOPIC_PROPERTIES = ["P135", "P276", "P136", "P195"]
+
+
+def _parse_date_range(topic: str) -> Optional[tuple]:
+    """Parse a date range from topic string. Returns (year_start, year_end) or None."""
+    # "1800s" → 1800-1900
+    m = re.match(r"^(\d{4})s$", topic.strip())
+    if m:
+        start = int(m.group(1))
+        return (start, start + 100)
+
+    # "19th century" → 1800-1900
+    m = re.match(r"^(\d{1,2})(st|nd|rd|th)\s+century$", topic.strip(), re.IGNORECASE)
+    if m:
+        century = int(m.group(1))
+        return ((century - 1) * 100, century * 100)
+
+    # "1500-1600" → 1500-1600
+    m = re.match(r"^(\d{4})\s*[-–]\s*(\d{4})$", topic.strip())
+    if m:
+        return (int(m.group(1)), int(m.group(2)))
+
+    return None
+
+
+def _search_entity(topic: str) -> List[dict]:
+    """Search Wikidata for entities matching the topic string.
+    Returns list of {id, label, description} dicts."""
+    try:
+        resp = requests.get(
+            "https://www.wikidata.org/w/api.php",
+            params={
+                "action": "wbsearchentities",
+                "search": topic,
+                "language": "en",
+                "format": "json",
+                "limit": 5,
+            },
+            headers=HEADERS,
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("search", [])
+    except Exception as e:
+        logger.debug("Entity search failed for '%s': %s", topic, e)
+    return []
+
+
+def query_artworks_by_topic(topic: str, limit: int = 30) -> List[dict]:
+    """
+    Query Wikidata for artworks matching a topic.
+
+    Tries in order:
+    1. Date range: "1800s", "19th century", "1500-1600"
+    2. Entity search → query by movement/location/genre/collection
+    """
+    artwork_types = " ".join(ARTWORK_TYPES)
+
+    # 1. Try as date range (no entity search needed)
+    date_range = _parse_date_range(topic)
+    if date_range:
+        query = SPARQL_BY_PERIOD.format(
+            artwork_types=artwork_types,
+            year_start=date_range[0],
+            year_end=date_range[1],
+            limit=limit,
+        )
+        results = _execute_sparql(query)
+        if results:
+            logger.info("Found %d artworks for period '%s'", len(results), topic)
+            return results
+
+    # 2. Search for the topic entity, then query artworks linked to it
+    entities = _search_entity(topic)
+    if not entities:
+        logger.warning("No Wikidata entities found for '%s'", topic)
+        return []
+
+    # Try each entity with each property (movement, location, genre, collection)
+    for entity in entities:
+        entity_id = entity["id"]
+        for prop in TOPIC_PROPERTIES:
+            query = SPARQL_BY_ENTITY.format(
+                property=prop,
+                entity_id=entity_id,
+                artwork_types=artwork_types,
+                limit=limit,
+            )
+            results = _execute_sparql(query)
+            if results:
+                logger.info(
+                    "Found %d artworks for '%s' (entity %s, property %s)",
+                    len(results), topic, entity_id, prop,
+                )
+                return results
+
+    logger.warning("No artworks found for topic '%s' on Wikidata", topic)
+    return []
+
+
 def query_artist_artworks(artist_name: str) -> List[dict]:
     """
     Query Wikidata for all artworks by the given artist.
@@ -124,14 +277,14 @@ def _try_sparql_search(artist_name: str) -> List[dict]:
     return _execute_sparql(query)
 
 
-def _execute_sparql(query: str) -> List[dict]:
+def _execute_sparql(query: str, timeout: int = 30) -> List[dict]:
     """Execute a SPARQL query and parse results."""
     try:
         resp = requests.get(
             SPARQL_ENDPOINT,
             params={"query": query},
             headers=HEADERS,
-            timeout=15,
+            timeout=timeout,
         )
         if resp.status_code != 200:
             logger.debug("SPARQL query failed with status %d", resp.status_code)
@@ -179,6 +332,7 @@ def _parse_sparql_results(data: dict) -> List[dict]:
             "location": _get_val(row, "locationLabel") or "",
             "movement": _get_val(row, "movementLabel") or "",
             "nationality": _get_val(row, "nationalityLabel") or "",
+            "artist": _get_val(row, "artistLabel") or "",
             "wikidata_id": wikidata_id,
         }
 
@@ -213,16 +367,19 @@ def _extract_year(date_str: str) -> str:
     return match.group(1) if match else date_str
 
 
-def artworks_to_card_fields(artworks: List[dict], artist_name: str) -> List[dict]:
+def artworks_to_card_fields(artworks: List[dict], artist_name: str = "") -> List[dict]:
     """
     Convert Wikidata artwork dicts to Anki card field dicts
     matching the artwork deck schema.
+
+    If artist_name is empty, uses the 'artist' field from each artwork dict
+    (populated by topic-based queries).
     """
     cards = []
     for art in artworks:
         fields = {
             "Artwork": "",  # Will be filled when image is downloaded
-            "Artist": artist_name,
+            "Artist": artist_name or art.get("artist", ""),
             "Title": art["title"],
             "Subtitle/Alternate Titles": "",
             "Title in Original Language": "",

@@ -21,6 +21,10 @@ prompt_anki.txt
 # Streamlit (legacy)
 .streamlit/secrets.toml
 
+# Web frontend
+web/node_modules/
+web/dist/
+
 # IDE
 .vscode/
 .idea/

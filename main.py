@@ -1,5 +1,9 @@
-from fastapi import FastAPI
+from pathlib import Path
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 import storage.database  # triggers init_db()
 
@@ -21,7 +25,20 @@ app.include_router(generate_router)
 app.include_router(cards_router)
 app.include_router(analytics_router)
 
+# Serve card media files
+MEDIA_DIR = Path("data/media")
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
 
-@app.get("/")
-def root():
-    return {"status": "ok", "message": "Anki Card Generator API v2.0"}
+# Serve web frontend (production build)
+WEB_DIST = Path(__file__).parent / "web" / "dist"
+if WEB_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=str(WEB_DIST / "assets")), name="assets")
+
+    @app.get("/{path:path}")
+    async def serve_spa(request: Request, path: str):
+        # Try static file first, then fall back to index.html for SPA routing
+        file = WEB_DIST / path
+        if file.is_file():
+            return FileResponse(str(file))
+        return FileResponse(str(WEB_DIST / "index.html"))
