@@ -30,7 +30,6 @@ def _generate_with_retry(client: genai.Client, prompt: str, max_retries: int = 3
         except Exception as e:
             error_str = str(e)
             if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                # Extract retry delay from error message
                 match = re.search(r"retryDelay.*?(\d+)s", error_str)
                 wait = int(match.group(1)) + 2 if match else 30 * (attempt + 1)
                 logger.info("Rate limited. Waiting %ds before retry %d/%d...", wait, attempt + 1, max_retries)
@@ -41,50 +40,30 @@ def _generate_with_retry(client: genai.Client, prompt: str, max_retries: int = 3
     raise Exception("Max retries exceeded due to rate limiting")
 
 
-def identify_expert_persona(topic: str, source_snippet: str = "") -> str:
-    """AGENT 0: The Router. Decides the best expert persona for the topic."""
-    client = _get_client()
-    if not client:
-        return "Expert Tutor"
-
-    prompt = f"""
-    Determine the single best "Job Title" or "Expert Persona" to teach the following topic.
-    TOPIC: "{topic}"
-    CONTEXT_SNIPPET: "{source_snippet[:200]}"
-
-    Examples:
-    - Topic: "SQL" -> "Senior Database Administrator"
-    - Topic: "Monet" -> "Art History Professor"
-    - Topic: "Tort Law" -> "Bar Exam Prep Tutor"
-
-    OUTPUT: Just the Job Title. No extra text.
-    """
-    try:
-        return _generate_with_retry(client, prompt).strip()
-    except Exception as e:
-        logger.warning("Persona identification failed: %s", e)
-        return "Expert Tutor"
-
-
 def analyze_knowledge_gaps(
     topic: str,
     existing_cards_text: str,
     source_text: str | None = None,
     num: int = 3,
 ) -> tuple[str, str]:
-    """AGENT 1: The Curriculum Designer. Returns (gap_analysis, persona)."""
+    """
+    Combined Agent 0+1: Identifies expert persona AND analyzes gaps in a single call.
+    Returns (gap_analysis, persona).
+    Saves 1 API call vs the previous 2-call approach.
+    """
     client = _get_client()
     if not client:
         return "Error: No API Key", "Expert"
 
-    snippet = source_text[:500] if source_text else topic
-    persona = identify_expert_persona(topic, snippet)
-
     if source_text:
         prompt = f"""
-        You are a strict {persona}.
+        You are an expert educator. First, determine the best expert persona for this topic,
+        then perform a gap analysis AS that persona.
 
-        SOURCE MATERIAL (The user's study document):
+        TOPIC: "{topic}"
+        SOURCE MATERIAL (first 500 chars): "{source_text[:500]}"
+
+        SOURCE MATERIAL (Full):
         '''
         {source_text[:30000]}
         '''
@@ -94,41 +73,59 @@ def analyze_knowledge_gaps(
         {existing_cards_text}
         '''
 
-        TASK: Compare the SOURCE MATERIAL vs EXISTING CARDS.
-        Identify {num} concepts or specific examples found in the SOURCE MATERIAL that are missing from the existing cards.
+        TASK:
+        1. First line: State your chosen expert persona (e.g., "PERSONA: Art History Professor")
+        2. Then: Compare the SOURCE MATERIAL vs EXISTING CARDS and identify {num} concepts
+           found in the SOURCE MATERIAL that are missing from the existing cards.
 
         RULES:
-        1. Act exactly like a {persona}.
-        2. ONLY suggest concepts actually present in the SOURCE MATERIAL.
-        3. Ignore outside knowledge not in the text.
+        1. ONLY suggest concepts actually present in the SOURCE MATERIAL.
+        2. Ignore outside knowledge not in the text.
 
         OUTPUT FORMAT:
-        Bulleted list of missing concepts.
+        PERSONA: [Job Title]
+        [Bulleted list of {num} missing concepts]
         """
     else:
         prompt = f"""
-        You are a strict {persona}.
+        You are an expert educator. First, determine the best expert persona for this topic,
+        then perform a gap analysis AS that persona.
 
-        USER GOAL: Expand knowledge on "{topic}".
+        TOPIC: "{topic}"
 
         THE USER ALREADY KNOWS:
         '''
         {existing_cards_text}
         '''
 
-        TASK: Identify {num} SPECIFIC "Knowledge Gaps" or new examples (e.g. Artworks) missing from the user's knowledge.
+        TASK:
+        1. First line: State your chosen expert persona (e.g., "PERSONA: Art History Professor")
+        2. Then: Identify {num} SPECIFIC "Knowledge Gaps" or new examples (e.g. Artworks)
+           missing from the user's knowledge.
 
-        CRITICAL RULES:
-        1. Act exactly like a {persona}.
-        2. Suggest advanced angles, edge cases, or comparisons specific to your field.
-        3. Do NOT repeat what the user already knows.
+        RULES:
+        1. Suggest advanced angles, edge cases, or comparisons specific to your field.
+        2. Do NOT repeat what the user already knows.
 
         OUTPUT FORMAT:
-        Bulleted list of missing concepts.
+        PERSONA: [Job Title]
+        [Bulleted list of {num} missing concepts]
         """
 
     try:
-        return _generate_with_retry(client, prompt).strip(), persona
+        raw = _generate_with_retry(client, prompt).strip()
+
+        # Parse persona from first line
+        persona = "Expert Tutor"
+        lines = raw.split("\n", 1)
+        first_line = lines[0].strip()
+        if first_line.upper().startswith("PERSONA:"):
+            persona = first_line.split(":", 1)[1].strip().strip("*").strip()
+            gap_analysis = lines[1].strip() if len(lines) > 1 else raw
+        else:
+            gap_analysis = raw
+
+        return gap_analysis, persona
     except Exception as e:
         return f"Error analyzing gaps: {e}", "Expert"
 
@@ -139,7 +136,7 @@ def generate_cards(
     field_config: dict[str, str],
     persona: str = "Expert Tutor",
 ) -> str:
-    """AGENT 2: The Content Creator. Returns raw pipe-separated card text."""
+    """Agent 2: The Content Creator. Returns raw pipe-separated card text."""
     client = _get_client()
     if not client:
         return "Error: No API Key"
@@ -147,7 +144,6 @@ def generate_cards(
     fields_list = list(field_config.keys())
     structure_example = "|".join(f"{f}" for f in fields_list)
 
-    # Build numbered field instructions so the AI knows EXACTLY what each position is
     field_instructions = []
     for i, (f, f_type) in enumerate(field_config.items(), 1):
         if f_type == "Image":

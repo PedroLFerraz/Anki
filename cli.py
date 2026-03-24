@@ -82,10 +82,14 @@ def cmd_generate(args):
     run_id = repository.create_run(run)
 
     # Save cards with dedup
+    use_embeddings = not getattr(args, 'no_embeddings', False)
     saved = []
     for i, card_fields in enumerate(parsed):
-        card_text = embeddings.card_text_for_embedding(card_fields)
-        emb = embeddings.get_embedding(card_text)
+        emb = None
+        if use_embeddings:
+            card_text = embeddings.card_text_for_embedding(card_fields)
+            emb = embeddings.get_embedding(card_text)
+
         is_dup, reason = embeddings.is_duplicate(
             card_fields, existing_cards, existing_embeddings, new_embedding=emb
         )
@@ -107,12 +111,17 @@ def cmd_generate(args):
     print(f"\n{'='*60}")
     print(f"Generated {len(saved)} cards:\n")
 
+    # Get skip fields to hide from display
+    skip_fields = {f["name"] for f in dt.fields_schema if f["type"] == "(Skip)"}
+
     for idx, (card, is_dup, reason) in enumerate(saved):
         dup_tag = " [DUPLICATE]" if is_dup else ""
         print(f"--- Card {idx + 1}{dup_tag} ---")
         if is_dup:
             print(f"  Reason: {reason}")
         for key, val in card.fields_json.items():
+            if key in skip_fields or not val:
+                continue
             print(f"  {key}: {val}")
         print()
 
@@ -149,37 +158,40 @@ def cmd_generate(args):
     if accepted_count == 0:
         return
 
-    # Fetch media for accepted cards
-    fetch = input("Fetch images & audio? [Y/n] ").strip().lower()
+    # Fetch images for accepted cards (parallel)
+    fetch = input("Fetch images? [Y/n] ").strip().lower()
     if fetch in ("", "y", "yes"):
-        print("\nFetching media...")
+        # Build search tasks
+        image_tasks = []
         for card, is_dup, _ in saved:
             if card.id not in accepted_ids:
                 continue
             fields = card.fields_json
-
-            # Image
             search_query = fields.get(field_names[0], "")
             artist = fields.get("Artist", "")
             if artist:
                 search_query = f"{search_query} by {artist}"
             if search_query:
-                print(f"  Searching image: {search_query}")
-                urls = media.search_images(search_query)
-                if urls:
-                    result = media.download_image(urls)
-                    if result:
-                        repository.update_card_media(card.id, image_filename=result[0])
-                        card.image_filename = result[0]
+                image_tasks.append((card.id, search_query))
 
-            # Audio
-            audio_text = fields.get("Artist", "") or fields.get("Title", "")
-            if audio_text:
-                print(f"  Generating audio: {audio_text}")
-                result = media.generate_audio(audio_text, lang=args.audio_lang)
-                if result:
-                    repository.update_card_media(card.id, audio_filename=result[0])
-                    card.audio_filename = result[0]
+        if image_tasks:
+            def on_progress(card_id, filename, done, total):
+                status = filename if filename else "not found"
+                print(f"  [{done}/{total}] Card {card_id}: {status}")
+
+            print(f"\nFetching {len(image_tasks)} images in parallel...")
+            results = media.fetch_images_batch(image_tasks, max_workers=3, on_progress=on_progress)
+
+            for card_id, filename in results.items():
+                if filename:
+                    repository.update_card_media(card_id, image_filename=filename)
+                    # Update card object for export
+                    for card, _, _ in saved:
+                        if card.id == card_id:
+                            card.image_filename = filename
+
+            found = sum(1 for f in results.values() if f)
+            print(f"  Found {found}/{len(image_tasks)} images")
 
     # Export
     do_export = input("\nExport to .apkg now? [Y/n] ").strip().lower()
@@ -208,6 +220,20 @@ def cmd_list(args):
         if card.image_filename:
             print(f"       Image: {card.image_filename}")
         print()
+
+
+def cmd_import(args):
+    from core.apkg_import import import_apkg
+
+    print(f"Importing cards from: {args.file}")
+    stats = import_apkg(
+        args.file,
+        deck_type=args.deck_type,
+        compute_embeddings=not args.no_embeddings,
+    )
+    if "error" in stats:
+        print(f"Error: {stats['error']}")
+        sys.exit(1)
 
 
 def cmd_export(args):
@@ -240,11 +266,18 @@ def main():
     gen.add_argument("--deck-type", "-t", default="artwork", help="Deck type (default: artwork)")
     gen.add_argument("--deck-name", "-d", default="Great Works of Art", help="Deck name in Anki")
     gen.add_argument("--audio-lang", default="en", help="Audio language (default: en)")
+    gen.add_argument("--no-embeddings", action="store_true", help="Skip embedding API calls (uses fuzzy title matching only for dedup)")
 
     # list
     ls = subparsers.add_parser("list", aliases=["ls"], help="List generated cards")
     ls.add_argument("--deck-type", "-t", default="artwork")
     ls.add_argument("--status", "-s", help="Filter by status")
+
+    # import
+    imp = subparsers.add_parser("import", help="Import existing .apkg for dedup awareness")
+    imp.add_argument("file", help="Path to .apkg file")
+    imp.add_argument("--deck-type", "-t", default="artwork")
+    imp.add_argument("--no-embeddings", action="store_true", help="Skip embedding computation (faster but no semantic dedup)")
 
     # export
     exp = subparsers.add_parser("export", help="Export cards to .apkg")
@@ -258,6 +291,8 @@ def main():
         cmd_generate(args)
     elif args.command in ("list", "ls"):
         cmd_list(args)
+    elif args.command == "import":
+        cmd_import(args)
     elif args.command == "export":
         cmd_export(args)
     else:

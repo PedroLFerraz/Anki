@@ -1,10 +1,10 @@
-import base64
 import logging
 import os
 import re
 import tempfile
 import time
 import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from gtts import gTTS
@@ -158,3 +158,52 @@ def generate_audio(text: str, lang: str = "en") -> tuple[str, bytes] | None:
     except Exception as e:
         logger.warning("Audio generation error: %s", e)
         return None
+
+
+# --- 4. BATCH OPERATIONS ---
+
+def _fetch_single_image(card_id: int, search_query: str) -> tuple[int, str | None]:
+    """Search + download image for a single card. Returns (card_id, filename)."""
+    try:
+        urls = search_images(search_query)
+        if urls:
+            result = download_image(urls)
+            if result:
+                return card_id, result[0]
+    except Exception as e:
+        logger.warning("Image fetch failed for card %d: %s", card_id, e)
+    return card_id, None
+
+
+def fetch_images_batch(
+    tasks: list[tuple[int, str]],
+    max_workers: int = 3,
+    on_progress: callable = None,
+) -> dict[int, str | None]:
+    """
+    Fetch images for multiple cards in parallel.
+
+    Args:
+        tasks: list of (card_id, search_query) tuples
+        max_workers: number of parallel downloads (keep low to avoid rate limits)
+        on_progress: callback(card_id, filename, done_count, total)
+
+    Returns:
+        dict mapping card_id -> filename (or None if failed)
+    """
+    results = {}
+    total = len(tasks)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_fetch_single_image, card_id, query): card_id
+            for card_id, query in tasks
+        }
+
+        for i, future in enumerate(as_completed(futures), 1):
+            card_id, filename = future.result()
+            results[card_id] = filename
+            if on_progress:
+                on_progress(card_id, filename, i, total)
+
+    return results

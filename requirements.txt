@@ -11,3 +11,4 @@ pypdf
 numpy
 requests
 python-multipart
+zstandard
