@@ -115,3 +115,41 @@ def create_custom_model(model_name, description=""):
     # Note: If this fails on your version, you might need to change it manually in Anki: 
     # Tools -> Manage Note Types -> [Select Model] -> Fields -> [Select Question] -> "Sort by this field"
     return True
+
+def create_artwork_model(model_name):
+    if model_name in get_model_names():
+        return False
+
+    fields = ["Artwork", "Artist", "Nationality", "Title", "Date", "Period/Movement", "Permanent Location", "Note"]
+    
+    css = """.card {
+ font-family: times;
+ font-size: 24px;
+ text-align: center;
+ color: yellow;
+ background-color: black;
+}
+
+.card1 { background-color: #003366; }
+.card2 { background-color: #336633; }
+.card3 { background-color: #663333; }
+"""
+    
+    front = "<div style='font-family: Times; font-size: 24px; color: white'> Artist?</div>\n{{Artwork}}"
+    back = "{{Artwork}}\n\n<hr id='answer'>\n<div style='font-family: Times; font-size: 30px; color: yellow'>{{Artist}}</div>\n<div style='font-size: 16px; color: #99CCFF'>({{Nationality}})\n<br>\n</br>\n<div style='font-family: Times; font-size: 16px; color: #99CCFF'> \"{{Title}}\"\n<div style='font-family: Times; font-size: 14px; color: #99CCFF'> \n{{#Date}}<div style='font-family: Times; font-size: 12px; color: #99CCFF'>({{Date}})</div>{{/Date}}\n<br>\n{{Period/Movement}}\n<br>\n{{Permanent Location}}\n<br>\n<br>\n<div style='font-family: Times; font-size: 16px; color: white'>{{Note}}</div>"
+    
+    template = {
+        "Name": "Artwork Layout",
+        "Front": front,
+        "Back": back
+    }
+    
+    req_params = {
+        "modelName": model_name,
+        "inOrderFields": fields,
+        "css": css,
+        "cardTemplates": [template]
+    }
+    
+    invoke("createModel", **req_params)
+    return True
