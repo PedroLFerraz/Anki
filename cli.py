@@ -169,18 +169,16 @@ def cmd_generate(args):
             fields = card.fields_json
             title = fields.get("Title", "")
             artist = fields.get("Artist", "")
-            # Use "Title by Artist" for best painting search results
-            search_query = f"{title} {artist}".strip() if title else fields.get(field_names[0], "")
-            if search_query:
-                image_tasks.append((card.id, search_query))
+            if title or artist:
+                image_tasks.append((card.id, title, artist))
 
         if image_tasks:
             def on_progress(card_id, filename, done, total):
                 status = filename if filename else "not found"
                 print(f"  [{done}/{total}] Card {card_id}: {status}")
 
-            print(f"\nFetching {len(image_tasks)} images in parallel...")
-            results = media.fetch_images_batch(image_tasks, max_workers=3, on_progress=on_progress)
+            print(f"\nFetching {len(image_tasks)} images (sequential to avoid rate limits)...")
+            results = media.fetch_images_batch(image_tasks, max_workers=1, on_progress=on_progress)
 
             for card_id, filename in results.items():
                 if filename:

@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from core import media, embeddings
+from core import media
 from core.cards import Card
 from export.genanki_export import export_cards
 from storage import repository
@@ -60,20 +60,16 @@ def fetch_media_for_card(card_id: int, audio_lang: str = "en"):
     result = {"image": None, "audio": None}
 
     # Image: use Title + Artist for precise artwork search
-    dt = repository.get_deck_type(card.deck_type)
-    if dt:
-        title = fields.get("Title", "")
-        artist = fields.get("Artist", "")
-        search_query = f"{title} {artist}".strip() if title else fields.get(dt.fields_schema[0]["name"], "")
-
-        if search_query:
-            urls = media.search_images(search_query)
-            if urls:
-                img_result = media.download_image(urls)
-                if img_result:
-                    filename, _ = img_result
-                    repository.update_card_media(card_id, image_filename=filename)
-                    result["image"] = filename
+    title = fields.get("Title", "")
+    artist = fields.get("Artist", "")
+    if title or artist:
+        urls = media.search_images(title=title, artist=artist)
+        if urls:
+            img_result = media.download_image(urls)
+            if img_result:
+                filename, _ = img_result
+                repository.update_card_media(card_id, image_filename=filename)
+                result["image"] = filename
 
     # Audio: use artist name
     audio_text = fields.get("Artist", "") or fields.get("Title", "")
