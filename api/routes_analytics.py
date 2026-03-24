@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter
 
 from storage import repository
@@ -6,7 +8,7 @@ router = APIRouter(prefix="/api", tags=["analytics"])
 
 
 @router.get("/analytics")
-def get_analytics(deck_type: str | None = None):
+def get_analytics(deck_type: Optional[str] = None):
     return repository.get_analytics(deck_type=deck_type)
 
 

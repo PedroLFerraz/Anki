@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -19,12 +20,12 @@ class CardUpdate(BaseModel):
 
 
 class ExportRequest(BaseModel):
-    card_ids: list[int]
+    card_ids: List[int]
     deck_name: str = "Great Works of Art"
 
 
 @router.get("/cards")
-def list_cards(deck_type: str | None = None, status: str | None = None):
+def list_cards(deck_type: Optional[str] = None, status: Optional[str] = None):
     cards = repository.get_cards(deck_type=deck_type, status=status)
     return [
         {
@@ -58,14 +59,12 @@ def fetch_media_for_card(card_id: int, audio_lang: str = "en"):
     fields = card.fields_json
     result = {"image": None, "audio": None}
 
-    # Image: use first field as search query, append artist for accuracy
+    # Image: use Title + Artist for precise artwork search
     dt = repository.get_deck_type(card.deck_type)
     if dt:
-        image_field = dt.fields_schema[0]["name"]
-        search_query = fields.get(image_field, "")
+        title = fields.get("Title", "")
         artist = fields.get("Artist", "")
-        if artist:
-            search_query = f"{search_query} by {artist}"
+        search_query = f"{title} {artist}".strip() if title else fields.get(dt.fields_schema[0]["name"], "")
 
         if search_query:
             urls = media.search_images(search_query)

@@ -161,16 +161,16 @@ def cmd_generate(args):
     # Fetch images for accepted cards (parallel)
     fetch = input("Fetch images? [Y/n] ").strip().lower()
     if fetch in ("", "y", "yes"):
-        # Build search tasks
+        # Build search tasks using Title + Artist for precise artwork search
         image_tasks = []
         for card, is_dup, _ in saved:
             if card.id not in accepted_ids:
                 continue
             fields = card.fields_json
-            search_query = fields.get(field_names[0], "")
+            title = fields.get("Title", "")
             artist = fields.get("Artist", "")
-            if artist:
-                search_query = f"{search_query} by {artist}"
+            # Use "Title by Artist" for best painting search results
+            search_query = f"{title} {artist}".strip() if title else fields.get(field_names[0], "")
             if search_query:
                 image_tasks.append((card.id, search_query))
 

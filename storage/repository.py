@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import sqlite3
 
@@ -12,7 +14,7 @@ from storage.database import get_connection
 def get_deck_type(name: str) -> DeckType | None:
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT name, fields_schema, templates, css FROM deck_types WHERE name = ?", (name,))
+    c.execute("SELECT name, fields_schema, templates, css, anki_model_id, anki_deck_id FROM deck_types WHERE name = ?", (name,))
     row = c.fetchone()
     conn.close()
     if not row:
@@ -23,13 +25,15 @@ def get_deck_type(name: str) -> DeckType | None:
         fields_schema=json.loads(row[1]),
         templates=[CardTemplate(**t) for t in templates_raw],
         css=row[3],
+        anki_model_id=row[4],
+        anki_deck_id=row[5],
     )
 
 
 def get_all_deck_types() -> list[DeckType]:
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT name, fields_schema, templates, css FROM deck_types")
+    c.execute("SELECT name, fields_schema, templates, css, anki_model_id, anki_deck_id FROM deck_types")
     rows = c.fetchall()
     conn.close()
     result = []
@@ -40,8 +44,20 @@ def get_all_deck_types() -> list[DeckType]:
             fields_schema=json.loads(r[1]),
             templates=[CardTemplate(**t) for t in templates_raw],
             css=r[3],
+            anki_model_id=r[4],
+            anki_deck_id=r[5],
         ))
     return result
+
+
+def update_deck_type_anki_ids(name: str, model_id: int, deck_id: int):
+    """Store the real Anki model/deck IDs extracted from an imported .apkg."""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE deck_types SET anki_model_id = ?, anki_deck_id = ? WHERE name = ?",
+              (model_id, deck_id, name))
+    conn.commit()
+    conn.close()
 
 
 # --- Cards ---

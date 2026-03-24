@@ -89,7 +89,9 @@ def init_db():
         name TEXT PRIMARY KEY,
         fields_schema TEXT NOT NULL,
         templates TEXT NOT NULL,
-        css TEXT NOT NULL
+        css TEXT NOT NULL,
+        anki_model_id INTEGER,
+        anki_deck_id INTEGER
     )""")
 
     c.execute("""CREATE TABLE IF NOT EXISTS cards (
@@ -119,6 +121,14 @@ def init_db():
 
     c.execute("CREATE INDEX IF NOT EXISTS idx_cards_status ON cards(status)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cards_deck_type ON cards(deck_type)")
+
+    # Migration: add anki_model_id, anki_deck_id columns if missing
+    c.execute("PRAGMA table_info(deck_types)")
+    existing_cols = {row[1] for row in c.fetchall()}
+    if "anki_model_id" not in existing_cols:
+        c.execute("ALTER TABLE deck_types ADD COLUMN anki_model_id INTEGER")
+    if "anki_deck_id" not in existing_cols:
+        c.execute("ALTER TABLE deck_types ADD COLUMN anki_deck_id INTEGER")
 
     # Seed artwork deck type
     c.execute(

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -42,10 +44,14 @@ def export_cards(
 ) -> Path:
     """
     Export cards to an .apkg file.
+    Uses real Anki model/deck IDs from imported .apkg when available,
+    so the exported deck merges into the existing deck on import.
     Returns the path to the generated file.
     """
-    model = _build_genanki_model(deck_type, ARTWORK_MODEL_ID)
-    deck = genanki.Deck(ARTWORK_DECK_ID, deck_name)
+    model_id = deck_type.anki_model_id or ARTWORK_MODEL_ID
+    deck_id = deck_type.anki_deck_id or ARTWORK_DECK_ID
+    model = _build_genanki_model(deck_type, model_id)
+    deck = genanki.Deck(deck_id, deck_name)
 
     media_files = []
     field_names = [f["name"] for f in deck_type.fields_schema]
