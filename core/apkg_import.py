@@ -102,6 +102,29 @@ def _get_deck_id(conn: sqlite3.Connection) -> int | None:
     return None
 
 
+def extract_anki_ids(apkg_path: str, deck_type: str = "artwork") -> dict:
+    """Extract and save Anki model/deck IDs from an .apkg without re-importing cards.
+
+    Use this to fix NULL IDs so exports merge into the existing deck.
+    """
+    conn, tmpdir = _open_apkg_db(apkg_path)
+    ntid, field_names = _get_art_fields(conn)
+    deck_id = _get_deck_id(conn)
+    conn.close()
+
+    import shutil
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+    if ntid is None:
+        return {"error": "No artwork note type found in .apkg"}
+
+    if ntid and deck_id:
+        repository.update_deck_type_anki_ids(deck_type, model_id=ntid, deck_id=deck_id)
+        logger.info("Saved Anki IDs: model=%d, deck=%d", ntid, deck_id)
+
+    return {"model_id": ntid, "deck_id": deck_id}
+
+
 def import_apkg(
     apkg_path: str,
     deck_type: str = "artwork",

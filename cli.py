@@ -153,7 +153,7 @@ def cmd_generate(args):
 
     # For artwork decks: use Wikidata (no LLM, no hallucinations)
     if deck_type_name == "artwork":
-        from core.wikidata import query_artworks_by_topic, artworks_to_card_fields
+        from core.wikidata import query_artworks_by_topic, artworks_to_card_fields, base_title
 
         print(f"\nSearching Wikidata for '{args.topic}'...")
         artworks = query_artworks_by_topic(args.topic, limit=args.count)
@@ -168,9 +168,9 @@ def cmd_generate(args):
 
         # Dedup against existing deck
         existing_cards = repository.get_cards(deck_type=deck_type_name)
-        existing_titles = {c.fields_json.get("Title", "").strip().lower() for c in existing_cards}
+        existing_titles = {base_title(c.fields_json.get("Title", "")) for c in existing_cards}
 
-        new_artworks = [a for a in artworks if a["title"].strip().lower() not in existing_titles]
+        new_artworks = [a for a in artworks if base_title(a["title"]) not in existing_titles]
         skipped = len(artworks) - len(new_artworks)
         if skipped:
             print(f"Skipped {skipped} already in deck.")
@@ -336,7 +336,7 @@ def cmd_import(args):
 
 def cmd_artist(args):
     """Look up an artist's real paintings on Wikidata and create cards."""
-    from core.wikidata import query_artist_artworks, artworks_to_card_fields
+    from core.wikidata import query_artist_artworks, artworks_to_card_fields, base_title
 
     deck_type_name = args.deck_type
     dt = repository.get_deck_type(deck_type_name)
@@ -359,11 +359,11 @@ def cmd_artist(args):
         artworks = artworks[:args.limit]
         print(f"Showing first {args.limit}.")
 
-    # Dedup against existing deck
+    # Dedup against existing deck (fuzzy title match)
     existing_cards = repository.get_cards(deck_type=deck_type_name)
-    existing_titles = {c.fields_json.get("Title", "").strip().lower() for c in existing_cards}
+    existing_titles = {base_title(c.fields_json.get("Title", "")) for c in existing_cards}
 
-    new_artworks = [a for a in artworks if a["title"].strip().lower() not in existing_titles]
+    new_artworks = [a for a in artworks if base_title(a["title"]) not in existing_titles]
     skipped = len(artworks) - len(new_artworks)
     if skipped:
         print(f"Skipped {skipped} already in deck.")
@@ -392,6 +392,20 @@ def cmd_clear(args):
         print("No cards to clear.")
     else:
         print(f"Total: {total} cards cleared.")
+
+
+def cmd_repair_ids(args):
+    """Extract and save Anki model/deck IDs from an .apkg file."""
+    from core.apkg_import import extract_anki_ids
+
+    print(f"Extracting Anki IDs from: {args.file}")
+    result = extract_anki_ids(args.file, deck_type=args.deck_type)
+    if "error" in result:
+        print(f"Error: {result['error']}")
+        sys.exit(1)
+    print(f"Model ID: {result['model_id']}")
+    print(f"Deck ID: {result['deck_id']}")
+    print("IDs saved. Future exports will merge into this deck.")
 
 
 def cmd_export(args):
@@ -451,6 +465,11 @@ def main():
     clr.add_argument("--status", "-s", default="GENERATED,REJECTED,DUPLICATE",
                      help="Statuses to clear (comma-separated, default: GENERATED,REJECTED,DUPLICATE)")
 
+    # repair-ids
+    rep = subparsers.add_parser("repair-ids", help="Extract Anki model/deck IDs from .apkg for export merging")
+    rep.add_argument("file", help="Path to .apkg file")
+    rep.add_argument("--deck-type", "-t", default="artwork")
+
     # export
     exp = subparsers.add_parser("export", help="Export cards to .apkg")
     exp.add_argument("--deck-type", "-t", default="artwork")
@@ -469,6 +488,8 @@ def main():
         cmd_artist(args)
     elif args.command == "clear":
         cmd_clear(args)
+    elif args.command == "repair-ids":
+        cmd_repair_ids(args)
     elif args.command == "export":
         cmd_export(args)
     else:

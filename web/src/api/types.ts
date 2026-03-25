@@ -53,6 +53,7 @@ export interface GeneratedCard {
   status: string;
   duplicate_reason?: string | null;
   has_free_image?: boolean;
+  image_filename?: string | null;
 }
 
 export interface ExportRequest {

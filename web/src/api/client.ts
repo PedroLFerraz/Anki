@@ -57,6 +57,16 @@ export async function exportCards(data: import('./types').ExportRequest) {
   return res.blob();
 }
 
+export async function clearCards(status?: string, deck_type?: string) {
+  const sp = new URLSearchParams();
+  if (status) sp.set('status', status);
+  if (deck_type) sp.set('deck_type', deck_type);
+  const qs = sp.toString();
+  return request<{ deleted: number }>(`/api/cards/clear${qs ? `?${qs}` : ''}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function fetchDeckTypes() {
   return request<import('./types').DeckType[]>('/api/deck-types');
 }

@@ -353,6 +353,15 @@ def _merge_field(record: dict, field: str, new_value: Optional[str]):
             record[field] = new_value
 
 
+def base_title(title: str) -> str:
+    """Normalize a title for dedup/grouping: remove dates, parentheticals, collapse whitespace."""
+    t = title.lower().strip()
+    t = re.sub(r"\s*\(.*?\)\s*$", "", t)
+    t = re.sub(r"\s*\d{4}\s*$", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
 def _sort_for_variety(artworks: List[dict]) -> List[dict]:
     """Sort artworks so unique titles come first, similar titles later.
 

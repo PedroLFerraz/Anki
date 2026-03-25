@@ -1,12 +1,13 @@
 import { useState, useCallback } from 'react';
-import { useCards, useUpdateCardStatus, useFetchMedia, useExport } from '../api/hooks';
+import { useCards, useUpdateCardStatus, useFetchMedia, useExport, useClearCards } from '../api/hooks';
 import CardItem from '../components/cards/CardItem';
 
 const STATUS_FILTERS = ['ALL', 'GENERATED', 'ACCEPTED', 'REJECTED', 'EXPORTED', 'DUPLICATE', 'IMPORTED'];
 
 export default function CardsPage() {
-  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState('GENERATED');
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [fetchingMedia, setFetchingMedia] = useState(false);
 
   const { data: cards, isLoading } = useCards(
     statusFilter === 'ALL' ? undefined : { status: statusFilter }
@@ -14,6 +15,7 @@ export default function CardsPage() {
   const updateStatus = useUpdateCardStatus();
   const fetchMedia = useFetchMedia();
   const exportMut = useExport();
+  const clearCards = useClearCards();
 
   const toggleSelect = useCallback((id: number) => {
     setSelected((prev) => {
@@ -37,6 +39,19 @@ export default function CardsPage() {
     setSelected(new Set());
   };
 
+  const bulkFetchMedia = async () => {
+    setFetchingMedia(true);
+    const ids = Array.from(selected);
+    for (const id of ids) {
+      try {
+        await fetchMedia.mutateAsync(id);
+      } catch {
+        // continue with next card
+      }
+    }
+    setFetchingMedia(false);
+  };
+
   const handleExport = async () => {
     if (selected.size === 0) return;
     const blob = await exportMut.mutateAsync({
@@ -51,6 +66,12 @@ export default function CardsPage() {
     URL.revokeObjectURL(url);
   };
 
+  const handleClear = async () => {
+    if (!confirm('Delete all GENERATED, REJECTED, and DUPLICATE cards?')) return;
+    await clearCards.mutateAsync({});
+    setSelected(new Set());
+  };
+
   if (isLoading) return <p className="p-6 text-gray-500">Loading cards...</p>;
 
   return (
@@ -58,12 +79,12 @@ export default function CardsPage() {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-bold">Cards ({cards?.length || 0})</h2>
 
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center flex-wrap">
           {/* Status filter */}
           {STATUS_FILTERS.map((s) => (
             <button
               key={s}
-              onClick={() => setStatusFilter(s)}
+              onClick={() => { setStatusFilter(s); setSelected(new Set()); }}
               className={`text-xs px-2 py-1 rounded ${
                 statusFilter === s ? 'bg-gray-800 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
               }`}
@@ -76,13 +97,16 @@ export default function CardsPage() {
 
       {/* Bulk actions */}
       {selected.size > 0 && (
-        <div className="flex gap-2 items-center mb-4 p-3 bg-blue-50 rounded-lg">
+        <div className="flex gap-2 items-center mb-4 p-3 bg-blue-50 rounded-lg flex-wrap">
           <span className="text-sm font-medium">{selected.size} selected</span>
           <button onClick={() => bulkAction('ACCEPTED')} className="text-xs px-2 py-1 bg-green-600 text-white rounded">
             Accept
           </button>
           <button onClick={() => bulkAction('REJECTED')} className="text-xs px-2 py-1 bg-red-600 text-white rounded">
             Reject
+          </button>
+          <button onClick={bulkFetchMedia} disabled={fetchingMedia} className="text-xs px-2 py-1 bg-blue-600 text-white rounded">
+            {fetchingMedia ? 'Fetching...' : 'Fetch All Media'}
           </button>
           <button onClick={handleExport} disabled={exportMut.isPending} className="text-xs px-2 py-1 bg-purple-600 text-white rounded">
             {exportMut.isPending ? 'Exporting...' : 'Export .apkg'}
@@ -93,12 +117,19 @@ export default function CardsPage() {
         </div>
       )}
 
-      {/* Select all */}
-      <div className="flex gap-2 mb-4">
+      {/* Toolbar */}
+      <div className="flex gap-3 mb-4 items-center">
         <button onClick={selectAll} className="text-xs text-blue-600 hover:underline">Select all</button>
         {selected.size > 0 && (
-          <button onClick={selectNone} className="text-xs text-gray-500 hover:underline">Clear</button>
+          <button onClick={selectNone} className="text-xs text-gray-500 hover:underline">Clear selection</button>
         )}
+        <button
+          onClick={handleClear}
+          disabled={clearCards.isPending}
+          className="text-xs px-2 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 ml-auto"
+        >
+          {clearCards.isPending ? 'Clearing...' : 'Clear Old Cards'}
+        </button>
       </div>
 
       {/* Card grid */}

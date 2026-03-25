@@ -61,3 +61,12 @@ export function useExport() {
     mutationFn: (data: ExportRequest) => api.exportCards(data),
   });
 }
+
+export function useClearCards() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (params?: { status?: string; deck_type?: string }) =>
+      api.clearCards(params?.status, params?.deck_type),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cards'] }),
+  });
+}

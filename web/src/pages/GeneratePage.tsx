@@ -46,8 +46,17 @@ export default function GeneratePage() {
     updateStatus.mutate({ cardId: card.id, status });
   };
 
+  const handleAcceptAll = () => {
+    if (!result?.cards) return;
+    for (const card of result.cards) {
+      if (card.status === 'GENERATED') {
+        updateStatus.mutate({ cardId: card.id, status: 'ACCEPTED' });
+      }
+    }
+  };
+
   return (
-    <div className="p-6 max-w-3xl">
+    <div className="p-6 max-w-4xl">
       <h2 className="text-xl font-bold mb-4">Generate Cards</h2>
 
       {/* Mode toggle */}
@@ -128,7 +137,7 @@ export default function GeneratePage() {
             <div className="animate-spin w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full" />
             <div>
               <p className="text-sm font-medium">
-                Querying Wikidata...
+                Querying Wikidata & fetching images...
               </p>
               <p className="text-xs text-gray-500">
                 {elapsed}s elapsed
@@ -164,61 +173,71 @@ export default function GeneratePage() {
             </p>
           )}
 
-          {result.persona && (
-            <p className="text-sm text-gray-500 mb-3">Persona: {result.persona}</p>
-          )}
-
           {result.cards.length > 0 && (
             <div className="space-y-3">
-              <h3 className="font-medium text-sm">
-                {result.cards.length} cards generated:
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="font-medium text-sm">
+                  {result.cards.length} cards generated:
+                </h3>
+                <button
+                  onClick={handleAcceptAll}
+                  className="text-xs px-3 py-1.5 bg-green-600 text-white rounded hover:bg-green-700"
+                >
+                  Accept All
+                </button>
+              </div>
               {result.cards.map((card) => (
-                <div key={card.id} className="border rounded-lg p-3 bg-white">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="font-medium text-sm">{card.fields.Title || '(untitled)'}</p>
-                      {card.fields.Artist && (
-                        <p className="text-xs text-gray-500">{card.fields.Artist}</p>
-                      )}
-                      {card.fields.Date && (
-                        <p className="text-xs text-gray-400">{card.fields.Date}</p>
-                      )}
-                      {card.fields.Medium && (
-                        <p className="text-xs text-gray-400">{card.fields.Medium}</p>
-                      )}
-                      {card.fields['Permanent Location'] && (
-                        <p className="text-xs text-gray-400">{card.fields['Permanent Location']}</p>
-                      )}
-                      {card.has_free_image !== undefined && (
-                        <p className="text-xs text-gray-400 mt-1">
-                          {card.has_free_image ? 'Free image available' : 'No free image (copyrighted)'}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <CardStatusBadge status={card.status} />
-                      {card.status === 'GENERATED' && (
-                        <>
-                          <button
-                            onClick={() => handleCardAction(card, 'ACCEPTED')}
-                            className="text-xs px-2 py-1 bg-green-600 text-white rounded"
-                          >
-                            Accept
-                          </button>
-                          <button
-                            onClick={() => handleCardAction(card, 'REJECTED')}
-                            className="text-xs px-2 py-1 bg-red-600 text-white rounded"
-                          >
-                            Reject
-                          </button>
-                        </>
-                      )}
-                    </div>
+                <div key={card.id} className="border rounded-lg p-3 bg-white flex gap-3">
+                  {/* Image thumbnail */}
+                  <div className="w-20 h-20 shrink-0 bg-gray-100 rounded overflow-hidden flex items-center justify-center">
+                    {card.image_filename ? (
+                      <img
+                        src={`/media/${card.image_filename}`}
+                        alt={card.fields.Title || ''}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-gray-400 text-xs">No img</span>
+                    )}
                   </div>
-                  {card.duplicate_reason && (
-                    <p className="text-xs text-yellow-600 mt-1">Duplicate: {card.duplicate_reason}</p>
-                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between">
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm truncate">{card.fields.Title || '(untitled)'}</p>
+                        {card.fields.Artist && (
+                          <p className="text-xs text-gray-500">{card.fields.Artist}</p>
+                        )}
+                        {card.fields.Date && (
+                          <p className="text-xs text-gray-400">{card.fields.Date}</p>
+                        )}
+                        {card.fields['Permanent Location'] && (
+                          <p className="text-xs text-gray-400 truncate">{card.fields['Permanent Location']}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 ml-2">
+                        <CardStatusBadge status={card.status} />
+                        {card.status === 'GENERATED' && (
+                          <>
+                            <button
+                              onClick={() => handleCardAction(card, 'ACCEPTED')}
+                              className="text-xs px-2 py-1 bg-green-600 text-white rounded"
+                            >
+                              Accept
+                            </button>
+                            <button
+                              onClick={() => handleCardAction(card, 'REJECTED')}
+                              className="text-xs px-2 py-1 bg-red-600 text-white rounded"
+                            >
+                              Reject
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    {card.duplicate_reason && (
+                      <p className="text-xs text-yellow-600 mt-1">Duplicate: {card.duplicate_reason}</p>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

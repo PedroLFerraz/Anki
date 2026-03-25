@@ -3,12 +3,42 @@ import logging
 from fastapi import APIRouter, File, UploadFile
 from pydantic import BaseModel
 
-from core import agents, embeddings, parsing
+from core import agents, embeddings, media, parsing
 from core.cards import Card, GenerationRun
 from storage import repository
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["generate"])
+
+
+def _fetch_image_for_artwork(card_id: int, artwork: dict, fields: dict) -> str | None:
+    """Download image for an artwork card, using Wikidata URL when available.
+
+    Returns filename or None.
+    """
+    image_url = artwork.get("image_url") or fields.get("Image Source", "")
+    title = fields.get("Title", "")
+    artist = fields.get("Artist", "")
+
+    # Try Wikidata URL directly first (fastest, most reliable)
+    if image_url:
+        result = media.download_image(image_url)
+        if result:
+            filename, _ = result
+            repository.update_card_media(card_id, image_filename=filename)
+            return filename
+
+    # Fall back to multi-source search
+    if title or artist:
+        urls, _ = media.search_images(title=title, artist=artist)
+        if urls:
+            result = media.download_image(urls)
+            if result:
+                filename, _ = result
+                repository.update_card_media(card_id, image_filename=filename)
+                return filename
+
+    return None
 
 
 class GenerateRequest(BaseModel):
@@ -33,15 +63,15 @@ def generate_cards(req: GenerateRequest):
 
     # Artwork decks: use Wikidata (no LLM, no hallucinations)
     if req.deck_type == "artwork":
-        from core.wikidata import query_artworks_by_topic, artworks_to_card_fields
+        from core.wikidata import query_artworks_by_topic, artworks_to_card_fields, base_title
 
         artworks = query_artworks_by_topic(req.topic, limit=req.count)
         if not artworks:
             return {"error": f"No artworks found on Wikidata for '{req.topic}'"}
 
         existing_cards = repository.get_cards(deck_type=req.deck_type)
-        existing_titles = {c.fields_json.get("Title", "").strip().lower() for c in existing_cards}
-        new_artworks = [a for a in artworks if a["title"].strip().lower() not in existing_titles]
+        existing_titles = {base_title(c.fields_json.get("Title", "")) for c in existing_cards}
+        new_artworks = [a for a in artworks if base_title(a["title"]) not in existing_titles]
 
         if not new_artworks:
             return {
@@ -53,17 +83,24 @@ def generate_cards(req: GenerateRequest):
 
         card_fields_list = artworks_to_card_fields(new_artworks)
         saved_cards = []
-        for fields in card_fields_list:
+        for i, (art, fields) in enumerate(zip(new_artworks, card_fields_list)):
             card = Card(
                 deck_type=req.deck_type, fields_json=fields,
                 source_topic=req.topic, status="GENERATED",
             )
             card_id = repository.save_card(card)
+
+            # Auto-fetch image
+            img_filename = _fetch_image_for_artwork(card_id, art, fields)
+            logger.info("[%d/%d] %s → %s", i + 1, len(new_artworks),
+                        fields.get("Title", "?"), img_filename or "no image")
+
             saved_cards.append({
                 "id": card_id,
                 "fields": fields,
                 "status": "GENERATED",
                 "has_free_image": bool(fields.get("Image Source")),
+                "image_filename": img_filename,
             })
 
         return {
@@ -135,7 +172,7 @@ def generate_cards(req: GenerateRequest):
 @router.post("/generate/artist")
 def generate_from_artist(req: ArtistRequest):
     """Look up real paintings by artist on Wikidata and create cards."""
-    from core.wikidata import query_artist_artworks, artworks_to_card_fields
+    from core.wikidata import query_artist_artworks, artworks_to_card_fields, base_title
 
     dt = repository.get_deck_type(req.deck_type)
     if not dt:
@@ -148,11 +185,11 @@ def generate_from_artist(req: ArtistRequest):
     if req.limit > 0:
         artworks = artworks[:req.limit]
 
-    # Filter out paintings already in the deck
+    # Filter out paintings already in the deck (fuzzy title match)
     existing_cards = repository.get_cards(deck_type=req.deck_type)
-    existing_titles = {c.fields_json.get("Title", "").strip().lower() for c in existing_cards}
+    existing_titles = {base_title(c.fields_json.get("Title", "")) for c in existing_cards}
 
-    new_artworks = [a for a in artworks if a["title"].strip().lower() not in existing_titles]
+    new_artworks = [a for a in artworks if base_title(a["title"]) not in existing_titles]
 
     if not new_artworks:
         return {
@@ -164,19 +201,26 @@ def generate_from_artist(req: ArtistRequest):
 
     card_fields_list = artworks_to_card_fields(new_artworks, req.artist_name)
 
-    # Save cards
+    # Save cards + auto-fetch images
     saved_cards = []
-    for fields in card_fields_list:
+    for i, (art, fields) in enumerate(zip(new_artworks, card_fields_list)):
         card = Card(
             deck_type=req.deck_type, fields_json=fields,
             source_topic=req.artist_name, status="GENERATED",
         )
         card_id = repository.save_card(card)
+
+        # Auto-fetch image
+        img_filename = _fetch_image_for_artwork(card_id, art, fields)
+        logger.info("[%d/%d] %s → %s", i + 1, len(new_artworks),
+                    fields.get("Title", "?"), img_filename or "no image")
+
         saved_cards.append({
             "id": card_id,
             "fields": fields,
             "status": "GENERATED",
             "has_free_image": bool(fields.get("Image Source")),
+            "image_filename": img_filename,
         })
 
     return {

@@ -59,10 +59,19 @@ def fetch_media_for_card(card_id: int, audio_lang: str = "en"):
     fields = card.fields_json
     result = {"image": None, "audio": None, "copyrighted": False}
 
-    # Image: use Title + Artist for precise artwork search
+    # Image: try Image Source URL first (Wikidata P18), then multi-source search
     title = fields.get("Title", "")
     artist = fields.get("Artist", "")
-    if title or artist:
+    image_source = fields.get("Image Source", "")
+
+    if image_source and image_source.startswith("http"):
+        img_result = media.download_image(image_source)
+        if img_result:
+            filename, _ = img_result
+            repository.update_card_media(card_id, image_filename=filename)
+            result["image"] = filename
+
+    if not result["image"] and (title or artist):
         urls, is_verified = media.search_images(title=title, artist=artist)
         if urls:
             img_result = media.download_image(urls)
