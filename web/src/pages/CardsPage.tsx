@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { useCards, useUpdateCardStatus, useFetchMedia, useExport } from '../api/hooks';
 import CardItem from '../components/cards/CardItem';
 
-const STATUS_FILTERS = ['ALL', 'GENERATED', 'ACCEPTED', 'REJECTED', 'EXPORTED', 'DUPLICATE'];
+const STATUS_FILTERS = ['ALL', 'GENERATED', 'ACCEPTED', 'REJECTED', 'EXPORTED', 'DUPLICATE', 'IMPORTED'];
 
 export default function CardsPage() {
   const [statusFilter, setStatusFilter] = useState('ALL');

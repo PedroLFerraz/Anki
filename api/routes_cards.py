@@ -64,22 +64,14 @@ def fetch_media_for_card(card_id: int, audio_lang: str = "en"):
     artist = fields.get("Artist", "")
     if title or artist:
         urls, is_verified = media.search_images(title=title, artist=artist)
-        if urls and is_verified:
+        if urls:
             img_result = media.download_image(urls)
             if img_result:
                 filename, _ = img_result
                 repository.update_card_media(card_id, image_filename=filename)
                 result["image"] = filename
-        elif not is_verified:
-            # Copyrighted painting — add search link instead
-            search_url = media._google_images_url(title, artist)
-            fields["Note"] = (
-                f'<a href="{search_url}">'
-                f'[Copyrighted] Search for "{title}" by {artist}</a>'
-            )
-            repository.save_card_fields(card_id, fields)
-            result["copyrighted"] = True
-            result["search_url"] = search_url
+                if not is_verified:
+                    result["copyrighted"] = True
 
     # Audio: use artist name
     audio_text = fields.get("Artist", "") or fields.get("Title", "")
@@ -91,6 +83,16 @@ def fetch_media_for_card(card_id: int, audio_lang: str = "en"):
             result["audio"] = filename
 
     return result
+
+
+@router.delete("/cards/clear")
+def clear_generated_cards(status: str = "GENERATED,REJECTED,DUPLICATE", deck_type: Optional[str] = None):
+    """Clear generated/rejected/duplicate cards from previous sessions."""
+    total = 0
+    for s in status.split(","):
+        count = repository.delete_cards_by_status(s.strip(), deck_type=deck_type)
+        total += count
+    return {"deleted": total}
 
 
 @router.post("/export")

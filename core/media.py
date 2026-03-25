@@ -450,66 +450,207 @@ def _google_images_url(title: str, artist: str) -> str:
     return f"https://www.google.com/search?tbm=isch&q={quote(query)}"
 
 
+def search_wikipedia_fairuse(title: str, artist: str) -> list[str]:
+    """
+    Find fair-use images of copyrighted paintings from Wikipedia articles.
+
+    Many Wikipedia articles about specific paintings include fair-use images
+    uploaded to the language-specific Wikipedia (not Commons). These are on
+    upload.wikimedia.org/wikipedia/{lang}/ instead of /wikipedia/commons/.
+    """
+    if not title:
+        return []
+
+    candidates = []
+
+    # Build search queries — try painting title, with and without artist
+    queries = [title]
+    if artist:
+        queries.insert(0, f"{title} ({artist})")
+        queries.insert(0, f"{title} {artist}")
+
+    title_lower = title.lower()
+    artist_lower = artist.lower() if artist else ""
+
+    for lang in ["en", "pt", "es", "fr", "it", "de"]:
+        api_url = f"https://{lang}.wikipedia.org/w/api.php"
+        for query in queries:
+            try:
+                # Search for the article
+                r = requests.get(api_url, params={
+                    "action": "query", "format": "json",
+                    "list": "search", "srsearch": query, "srlimit": 3,
+                }, headers=WIKI_HEADERS, timeout=8)
+                if r.status_code != 200:
+                    continue
+
+                results = r.json().get("query", {}).get("search", [])
+                if not results:
+                    continue
+
+                # Get images from the article pages
+                page_titles = [s["title"] for s in results]
+                r2 = requests.get(api_url, params={
+                    "action": "query", "format": "json",
+                    "titles": "|".join(page_titles),
+                    "prop": "images", "imlimit": 30,
+                }, headers=WIKI_HEADERS, timeout=8)
+                if r2.status_code != 200:
+                    continue
+
+                pages = r2.json().get("query", {}).get("pages", {})
+                image_titles = []
+                for page in pages.values():
+                    for img in page.get("images", []):
+                        fname = img["title"]
+                        fname_lower = fname.lower()
+                        # Skip non-image files and common icons
+                        if not any(ext in fname_lower for ext in [".jpg", ".jpeg", ".png"]):
+                            continue
+                        if any(skip in fname_lower for skip in [
+                            "icon", "logo", "nuvola", "farm-fresh", "wiki", "flag",
+                            "crystal", "portal", "commons-", "ambox", "edit-",
+                            "question_book", "stub", "disambig", "folder",
+                        ]):
+                            continue
+                        image_titles.append(fname)
+
+                if not image_titles:
+                    continue
+
+                # Get image URLs — query the language-specific wiki, not Commons
+                r3 = requests.get(api_url, params={
+                    "action": "query", "format": "json",
+                    "titles": "|".join(image_titles[:15]),
+                    "prop": "imageinfo", "iiprop": "url",
+                }, headers=WIKI_HEADERS, timeout=8)
+                if r3.status_code != 200:
+                    continue
+
+                img_pages = r3.json().get("query", {}).get("pages", {})
+                for p in img_pages.values():
+                    ii = p.get("imageinfo", [{}])[0]
+                    url = ii.get("url", "")
+                    if not url:
+                        continue
+                    # Score images: prefer ones with title/artist words in filename
+                    fname_lower = url.split("/")[-1].lower()
+                    score = 0
+                    for word in title_lower.split():
+                        if len(word) > 2 and word in fname_lower:
+                            score += 2
+                    if artist_lower:
+                        for word in artist_lower.split():
+                            if len(word) > 2 and word in fname_lower:
+                                score += 2
+                    candidates.append((score, url))
+
+                if candidates:
+                    # Return best-scored images
+                    candidates.sort(key=lambda x: x[0], reverse=True)
+                    return [url for _, url in candidates]
+
+            except Exception as e:
+                logger.debug("Wikipedia %s fairuse search failed: %s", lang, e)
+
+    return []
+
+
+def _score_url_relevance(url: str, title: str, artist: str) -> int:
+    """Score a URL by how likely it is to be the actual painting image."""
+    fname = url.split("/")[-1].lower().replace("%20", " ").replace("_", " ")
+    score = 0
+    title_lower = title.lower()
+    # Filename contains painting title words = strong signal
+    for word in title_lower.split():
+        if len(word) > 2 and word in fname:
+            score += 3
+    # Filename contains artist name = moderate signal (could be artist photo)
+    if artist:
+        for word in artist.lower().split():
+            if len(word) > 2 and word in fname:
+                score += 1
+    # Penalize if filename looks like a portrait/photo of the artist
+    if "portrait" in fname or "photo" in fname or "ca." in fname:
+        score -= 3
+    return score
+
+
 def search_images(title: str = "", artist: str = "", query: str = "") -> tuple[list[str], bool]:
     """
-    Master image search — tries multiple sources in order of reliability.
+    Master image search — tries multiple sources, returns best results.
 
     Returns (urls, is_verified):
-      - urls: list of image URLs, best candidates first
-      - is_verified: True if we found the painting from a trusted structured
-        source (Wikidata). False means results are from generic search and
-        may not be the actual painting (likely copyrighted).
+      - urls: list of image URLs, sorted by relevance to the painting
+      - is_verified: True if found from a structured/trusted source
     """
-    all_candidates = []
-    is_verified = False
+    all_candidates = []  # list of (score, url, verified)
     search_text = f"{title} {artist}".strip() if title else query
 
     if not search_text:
         return [], False
 
-    # Source 1: Wikidata (best — structured data with exact painting image P18)
+    # Source 1: Wikidata P18 (structured data — free images)
     if title:
         wikidata_results = search_wikidata(title, artist)
         if wikidata_results:
-            logger.info("Found %d verified images via Wikidata for '%s'", len(wikidata_results), search_text)
-            all_candidates.extend(wikidata_results)
-            is_verified = True  # Wikidata P18 = confirmed painting image
+            logger.info("Found %d images via Wikidata for '%s'", len(wikidata_results), search_text)
+            for url in wikidata_results:
+                score = _score_url_relevance(url, title, artist) + 5  # bonus for Wikidata
+                all_candidates.append((score, url, True))
 
-    # If Wikidata found it, we're done — that's the real painting
-    if is_verified:
-        return all_candidates, True
+    # Source 2: Wikipedia fair-use images (copyrighted paintings)
+    if title:
+        fairuse_results = search_wikipedia_fairuse(title, artist)
+        if fairuse_results:
+            logger.info("Found %d fair-use images via Wikipedia for '%s'", len(fairuse_results), search_text)
+            for url in fairuse_results:
+                score = _score_url_relevance(url, title, artist) + 5  # bonus for fair-use
+                all_candidates.append((score, url, True))
 
-    # Source 2: Wikimedia Commons search (good breadth, art-scored)
-    commons_results = search_wikimedia(search_text, title=title, artist=artist)
-    if commons_results:
-        logger.info("Found %d images via Wikimedia Commons for '%s'", len(commons_results), search_text)
-        for url in commons_results:
-            if url not in all_candidates:
-                all_candidates.append(url)
+    # Source 3: Wikimedia Commons search
+    if len(all_candidates) < 3:
+        commons_results = search_wikimedia(search_text, title=title, artist=artist)
+        if commons_results:
+            logger.info("Found %d images via Wikimedia Commons for '%s'", len(commons_results), search_text)
+            for url in commons_results:
+                score = _score_url_relevance(url, title, artist)
+                all_candidates.append((score, url, False))
 
-    # Source 3: Wikipedia article images
-    if title and len(all_candidates) < 2:
+    # Source 4: Wikipedia article lead images
+    if title and len(all_candidates) < 3:
         wiki_results = search_wikipedia(title, artist)
         if wiki_results:
             logger.info("Found %d images via Wikipedia for '%s'", len(wiki_results), search_text)
             for url in wiki_results:
-                if url not in all_candidates:
-                    all_candidates.append(url)
+                score = _score_url_relevance(url, title, artist)
+                all_candidates.append((score, url, False))
 
-    # Source 4: DuckDuckGo (fallback)
+    # Source 5: DuckDuckGo (last resort)
     if len(all_candidates) < 2:
         ddg_results = search_duckduckgo(search_text)
         if ddg_results:
             logger.info("Found %d images via DuckDuckGo for '%s'", len(ddg_results), search_text)
             for url in ddg_results:
-                if url not in all_candidates:
-                    all_candidates.append(url)
+                all_candidates.append((0, url, False))
 
     if not all_candidates:
-        logger.warning("No images found for '%s' — painting is likely copyrighted", search_text)
+        logger.warning("No images found for '%s'", search_text)
+        return [], False
 
-    # Non-Wikidata results are NOT verified — could be wrong images
-    return all_candidates, False
+    # Sort by score (highest first), deduplicate
+    all_candidates.sort(key=lambda x: x[0], reverse=True)
+    seen = set()
+    urls = []
+    any_verified = False
+    for score, url, verified in all_candidates:
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+            if verified:
+                any_verified = True
+
+    return urls, any_verified
 
 
 # --- 2. DOWNLOADER ---
@@ -583,19 +724,14 @@ def _fetch_single_image(card_id: int, title: str, artist: str) -> tuple[int, str
     """
     Search + download image for a single card.
     Returns (card_id, filename_or_none, is_verified).
-    If not verified, the image may not be the actual painting.
+    Always downloads the best image found, whether verified or not.
     """
     try:
         urls, is_verified = search_images(title=title, artist=artist)
-        if urls and is_verified:
-            # Verified painting image — download it
+        if urls:
             result = download_image(urls)
             if result:
-                return card_id, result[0], True
-        elif urls and not is_verified:
-            # Unverified — don't download, the image is probably wrong
-            logger.info("Skipping unverified images for '%s' by '%s' (likely copyrighted)", title, artist)
-            return card_id, None, False
+                return card_id, result[0], is_verified
     except Exception as e:
         logger.warning("Image fetch failed for card %d: %s", card_id, e)
     return card_id, None, False

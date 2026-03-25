@@ -4,6 +4,7 @@ const colors: Record<string, string> = {
   REJECTED: 'bg-red-100 text-red-800',
   EXPORTED: 'bg-purple-100 text-purple-800',
   DUPLICATE: 'bg-yellow-100 text-yellow-800',
+  IMPORTED: 'bg-indigo-100 text-indigo-800',
 };
 
 export default function CardStatusBadge({ status }: { status: string }) {

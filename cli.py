@@ -29,56 +29,57 @@ logger = logging.getLogger(__name__)
 def _fetch_images_and_export(saved_cards, dt, deck_type_name, deck_name, source_topic):
     """Shared helper: fetch images for accepted cards, then optionally export.
 
+    Images are fetched automatically (no prompt) since they're essential
+    for determining if a card is viable.
+
     saved_cards: list of Card objects (status=ACCEPTED, with .id set)
     """
     if not saved_cards:
         return
 
-    # Fetch images
-    fetch = input("Fetch images? [Y/n] ").strip().lower()
-    if fetch in ("", "y", "yes"):
-        image_tasks = []
-        for card in saved_cards:
-            title = card.fields_json.get("Title", "")
-            artist = card.fields_json.get("Artist", "")
-            if title or artist:
-                image_tasks.append((card.id, title, artist))
+    # Fetch images automatically
+    image_tasks = []
+    for card in saved_cards:
+        title = card.fields_json.get("Title", "")
+        artist = card.fields_json.get("Artist", "")
+        if title or artist:
+            image_tasks.append((card.id, title, artist))
 
-        if image_tasks:
-            def on_progress(card_id, filename, verified, done, total):
-                if filename:
-                    print(f"  [{done}/{total}] Card {card_id}: {filename}")
-                elif not verified:
-                    print(f"  [{done}/{total}] Card {card_id}: copyrighted - search link added")
-                else:
-                    print(f"  [{done}/{total}] Card {card_id}: not found")
+    if image_tasks:
+        def on_progress(card_id, filename, verified, done, total):
+            if filename:
+                tag = "" if verified else " (fair-use)"
+                print(f"  [{done}/{total}] Card {card_id}: {filename}{tag}")
+            else:
+                print(f"  [{done}/{total}] Card {card_id}: no image found")
 
-            print(f"\nFetching {len(image_tasks)} images...")
-            results = media.fetch_images_batch(image_tasks, max_workers=1, on_progress=on_progress)
+        print(f"\nFetching {len(image_tasks)} images...")
+        results = media.fetch_images_batch(image_tasks, max_workers=1, on_progress=on_progress)
 
-            found = 0
-            copyrighted = 0
-            for card_id, (filename, verified) in results.items():
-                if filename:
-                    repository.update_card_media(card_id, image_filename=filename)
-                    for card in saved_cards:
-                        if card.id == card_id:
-                            card.image_filename = filename
-                    found += 1
-                elif not verified:
-                    for card in saved_cards:
-                        if card.id == card_id:
-                            title = card.fields_json.get("Title", "")
-                            artist = card.fields_json.get("Artist", "")
-                            search_url = media._google_images_url(title, artist)
-                            card.fields_json["Note"] = (
-                                f'<a href="{search_url}">'
-                                f'[Copyrighted] Search for "{title}" by {artist}</a>'
-                            )
-                            repository.save_card_fields(card.id, card.fields_json)
-                    copyrighted += 1
+        found = 0
+        not_found = 0
+        for card_id, (filename, verified) in results.items():
+            if filename:
+                repository.update_card_media(card_id, image_filename=filename)
+                for card in saved_cards:
+                    if card.id == card_id:
+                        card.image_filename = filename
+                found += 1
+            else:
+                # No image found at all — add Google Images search link
+                for card in saved_cards:
+                    if card.id == card_id:
+                        title = card.fields_json.get("Title", "")
+                        artist = card.fields_json.get("Artist", "")
+                        search_url = media._google_images_url(title, artist)
+                        card.fields_json["Note"] = (
+                            f'<a href="{search_url}">'
+                            f'Search for "{title}" by {artist}</a>'
+                        )
+                        repository.save_card_fields(card.id, card.fields_json)
+                not_found += 1
 
-            print(f"  Images: {found} downloaded, {copyrighted} copyrighted (search links in Note)")
+        print(f"  Images: {found} downloaded, {not_found} not found")
 
     # Export
     do_export = input("\nExport to .apkg now? [Y/n] ").strip().lower()
@@ -378,6 +379,21 @@ def cmd_artist(args):
     _fetch_images_and_export(saved_cards, dt, deck_type_name, args.deck_name, args.artist_name)
 
 
+def cmd_clear(args):
+    """Clear generated/rejected/duplicate cards from previous sessions."""
+    statuses = args.status.split(",") if args.status else ["GENERATED", "REJECTED", "DUPLICATE"]
+    total = 0
+    for status in statuses:
+        count = repository.delete_cards_by_status(status.strip(), deck_type=args.deck_type)
+        if count:
+            print(f"Deleted {count} {status} cards.")
+            total += count
+    if total == 0:
+        print("No cards to clear.")
+    else:
+        print(f"Total: {total} cards cleared.")
+
+
 def cmd_export(args):
     dt = repository.get_deck_type(args.deck_type)
     if not dt:
@@ -429,6 +445,12 @@ def main():
     art.add_argument("--deck-type", "-t", default="artwork", help="Deck type (default: artwork)")
     art.add_argument("--deck-name", "-d", default="Great Works of Art", help="Deck name in Anki")
 
+    # clear
+    clr = subparsers.add_parser("clear", help="Clear generated/rejected/duplicate cards")
+    clr.add_argument("--deck-type", "-t", default="artwork")
+    clr.add_argument("--status", "-s", default="GENERATED,REJECTED,DUPLICATE",
+                     help="Statuses to clear (comma-separated, default: GENERATED,REJECTED,DUPLICATE)")
+
     # export
     exp = subparsers.add_parser("export", help="Export cards to .apkg")
     exp.add_argument("--deck-type", "-t", default="artwork")
@@ -445,6 +467,8 @@ def main():
         cmd_import(args)
     elif args.command == "artist":
         cmd_artist(args)
+    elif args.command == "clear":
+        cmd_clear(args)
     elif args.command == "export":
         cmd_export(args)
     else:

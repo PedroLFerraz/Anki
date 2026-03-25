@@ -225,22 +225,28 @@ def query_artist_artworks(artist_name: str) -> List[dict]:
 
     Returns list of dicts with keys: title, image_url, date, medium,
     location, movement, nationality, wikidata_id.
+
+    Results are sorted for variety: unique titles first, then duplicates.
     """
+    results = None
     # Try exact label match in multiple languages
     for lang in ("en", "pt", "es", "fr", "it", "de"):
         results = _try_sparql_query(artist_name, lang)
         if results:
             logger.info("Found %d artworks for '%s' via %s label", len(results), artist_name, lang)
-            return results
+            break
 
     # Fallback: text search
-    results = _try_sparql_search(artist_name)
-    if results:
-        logger.info("Found %d artworks for '%s' via text search", len(results), artist_name)
-        return results
+    if not results:
+        results = _try_sparql_search(artist_name)
+        if results:
+            logger.info("Found %d artworks for '%s' via text search", len(results), artist_name)
 
-    logger.warning("No artworks found for '%s' on Wikidata", artist_name)
-    return []
+    if not results:
+        logger.warning("No artworks found for '%s' on Wikidata", artist_name)
+        return []
+
+    return _sort_for_variety(results)
 
 
 def _try_sparql_query(artist_name: str, lang: str) -> List[dict]:
@@ -345,6 +351,51 @@ def _merge_field(record: dict, field: str, new_value: Optional[str]):
             record[field] = f"{existing}, {new_value}"
         else:
             record[field] = new_value
+
+
+def _sort_for_variety(artworks: List[dict]) -> List[dict]:
+    """Sort artworks so unique titles come first, similar titles later.
+
+    Monet has 183 "Water Lilies" variants — we want to show diverse works
+    first and group similar-titled ones at the end.
+    """
+    # Normalize title to a base form for grouping
+    def _base_title(title: str) -> str:
+        t = title.lower().strip()
+        # Remove parenthetical suffixes like "(study)" or "(detail)"
+        t = re.sub(r"\s*\(.*?\)\s*$", "", t)
+        # Remove trailing numbers/years
+        t = re.sub(r"\s*\d{4}\s*$", "", t)
+        # Collapse whitespace
+        t = re.sub(r"\s+", " ", t).strip()
+        return t
+
+    # Group by base title
+    groups = {}
+    for art in artworks:
+        base = _base_title(art["title"])
+        if base not in groups:
+            groups[base] = []
+        groups[base].append(art)
+
+    # Build result: take one from each group first (round-robin), then seconds, etc.
+    # Within each group, prefer artworks with images
+    for group in groups.values():
+        group.sort(key=lambda a: (not a.get("image_url"), a.get("date", "")))
+
+    result = []
+    round_num = 0
+    while True:
+        added = False
+        for group in groups.values():
+            if round_num < len(group):
+                result.append(group[round_num])
+                added = True
+        if not added:
+            break
+        round_num += 1
+
+    return result
 
 
 def _extract_year(date_str: str) -> str:

@@ -44,33 +44,35 @@ export default function CardItem({ card, selected, onToggle, onAction, onFetchMe
           <CardStatusBadge status={card.status} />
         </div>
 
-        {/* Actions */}
-        <div className="flex gap-1 mt-2">
-          {card.status === 'GENERATED' && (
-            <>
+        {/* Actions — imported cards are display-only */}
+        {card.status !== 'IMPORTED' && (
+          <div className="flex gap-1 mt-2">
+            {card.status === 'GENERATED' && (
+              <>
+                <button
+                  onClick={() => onAction('ACCEPTED')}
+                  className="text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700"
+                >
+                  Accept
+                </button>
+                <button
+                  onClick={() => onAction('REJECTED')}
+                  className="text-xs px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700"
+                >
+                  Reject
+                </button>
+              </>
+            )}
+            {!card.image_filename && card.status !== 'REJECTED' && (
               <button
-                onClick={() => onAction('ACCEPTED')}
-                className="text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700"
+                onClick={onFetchMedia}
+                className="text-xs px-2 py-1 bg-gray-600 text-white rounded hover:bg-gray-700"
               >
-                Accept
+                Fetch Image
               </button>
-              <button
-                onClick={() => onAction('REJECTED')}
-                className="text-xs px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700"
-              >
-                Reject
-              </button>
-            </>
-          )}
-          {!card.image_filename && card.status !== 'REJECTED' && (
-            <button
-              onClick={onFetchMedia}
-              className="text-xs px-2 py-1 bg-gray-600 text-white rounded hover:bg-gray-700"
-            >
-              Fetch Image
-            </button>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

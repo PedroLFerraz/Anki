@@ -62,6 +62,19 @@ def update_deck_type_anki_ids(name: str, model_id: int, deck_id: int):
 
 # --- Cards ---
 
+def delete_cards_by_status(status: str, deck_type: str | None = None) -> int:
+    """Delete cards with the given status. Returns count of deleted cards."""
+    conn = get_connection()
+    c = conn.cursor()
+    if deck_type:
+        c.execute("DELETE FROM cards WHERE status = ? AND deck_type = ?", (status, deck_type))
+    else:
+        c.execute("DELETE FROM cards WHERE status = ?", (status,))
+    count = c.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
 def _serialize_embedding(emb: np.ndarray | None) -> bytes | None:
     if emb is None:
         return None
