@@ -62,7 +62,7 @@ export default function GeneratePage() {
           onClick={() => setMode('topic')}
           className={`px-3 py-1.5 rounded text-sm ${mode === 'topic' ? 'bg-gray-800 text-white' : 'bg-gray-200'}`}
         >
-          Topic (LLM)
+          Browse by Topic (Wikidata)
         </button>
       </div>
 
@@ -91,7 +91,7 @@ export default function GeneratePage() {
                 type="text"
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
-                placeholder="e.g. Impressionism, Baroque painting"
+                placeholder="e.g. Impressionism, Louvre, 1800s"
                 className="w-full border rounded px-3 py-2 text-sm"
                 required
                 disabled={isPending}
@@ -104,7 +104,7 @@ export default function GeneratePage() {
                 value={count}
                 onChange={(e) => setCount(Number(e.target.value))}
                 min={1}
-                max={20}
+                max={50}
                 className="w-24 border rounded px-3 py-2 text-sm"
                 disabled={isPending}
               />
@@ -117,7 +117,7 @@ export default function GeneratePage() {
           disabled={isPending}
           className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
         >
-          {isPending ? 'Generating...' : mode === 'artist' ? 'Look Up Paintings' : 'Generate Cards'}
+          {isPending ? 'Searching...' : mode === 'artist' ? 'Look Up Paintings' : 'Search Artworks'}
         </button>
       </form>
 
@@ -128,11 +128,10 @@ export default function GeneratePage() {
             <div className="animate-spin w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full" />
             <div>
               <p className="text-sm font-medium">
-                {mode === 'artist' ? 'Querying Wikidata...' : 'Generating cards with AI...'}
+                Querying Wikidata...
               </p>
               <p className="text-xs text-gray-500">
                 {elapsed}s elapsed
-                {mode === 'topic' && ' — typically takes 30-90 seconds'}
               </p>
             </div>
           </div>

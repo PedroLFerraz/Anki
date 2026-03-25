@@ -85,47 +85,39 @@ ORDER BY ?date
 # --- Topic-based SPARQL templates ---
 
 # Query artworks by entity ID (movement, location, or genre)
-# Uses {property} to select which relationship to follow
+# Simplified: only paintings (Q3305213), fewer OPTIONALs for query performance
 SPARQL_BY_ENTITY = """
 SELECT DISTINCT ?artwork ?artworkLabel ?image ?date
-       ?medium ?mediumLabel ?location ?locationLabel
-       ?movement ?movementLabel
-       ?artist ?artistLabel ?nationality ?nationalityLabel
+       ?locationLabel ?movementLabel
+       ?artist ?artistLabel
 WHERE {{
   ?artwork wdt:{property} wd:{entity_id} .
-  ?artwork wdt:P31 ?type .
-  VALUES ?type {{ {artwork_types} }}
+  ?artwork wdt:P31 wd:Q3305213 .
   ?artwork wdt:P170 ?artist .
   OPTIONAL {{ ?artwork wdt:P18 ?image . }}
   OPTIONAL {{ ?artwork wdt:P571 ?date . }}
-  OPTIONAL {{ ?artwork wdt:P186 ?medium . }}
   OPTIONAL {{ ?artwork wdt:P276 ?location . }}
   OPTIONAL {{ ?artwork wdt:P135 ?movement . }}
-  OPTIONAL {{ ?artist wdt:P27 ?nationality . }}
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,pt,es,fr" . }}
 }}
-ORDER BY ?date
 LIMIT {limit}
 """
 
+# Period query: require image to keep results manageable and useful
 SPARQL_BY_PERIOD = """
 SELECT DISTINCT ?artwork ?artworkLabel ?image ?date
-       ?medium ?mediumLabel ?location ?locationLabel
-       ?movement ?movementLabel
-       ?artist ?artistLabel ?nationality ?nationalityLabel
+       ?locationLabel ?movementLabel
+       ?artist ?artistLabel
 WHERE {{
   ?artwork wdt:P31 wd:Q3305213 .
   ?artwork wdt:P170 ?artist .
   ?artwork wdt:P571 ?date .
   ?artwork wdt:P18 ?image .
   FILTER(YEAR(?date) >= {year_start} && YEAR(?date) < {year_end})
-  OPTIONAL {{ ?artwork wdt:P186 ?medium . }}
   OPTIONAL {{ ?artwork wdt:P276 ?location . }}
   OPTIONAL {{ ?artwork wdt:P135 ?movement . }}
-  OPTIONAL {{ ?artist wdt:P27 ?nationality . }}
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,pt,es,fr" . }}
 }}
-ORDER BY ?date
 LIMIT {limit}
 """
 
@@ -187,18 +179,15 @@ def query_artworks_by_topic(topic: str, limit: int = 30) -> List[dict]:
     1. Date range: "1800s", "19th century", "1500-1600"
     2. Entity search → query by movement/location/genre/collection
     """
-    artwork_types = " ".join(ARTWORK_TYPES)
-
     # 1. Try as date range (no entity search needed)
     date_range = _parse_date_range(topic)
     if date_range:
         query = SPARQL_BY_PERIOD.format(
-            artwork_types=artwork_types,
             year_start=date_range[0],
             year_end=date_range[1],
             limit=limit,
         )
-        results = _execute_sparql(query)
+        results = _execute_sparql(query, timeout=90)
         if results:
             logger.info("Found %d artworks for period '%s'", len(results), topic)
             return results
@@ -216,7 +205,6 @@ def query_artworks_by_topic(topic: str, limit: int = 30) -> List[dict]:
             query = SPARQL_BY_ENTITY.format(
                 property=prop,
                 entity_id=entity_id,
-                artwork_types=artwork_types,
                 limit=limit,
             )
             results = _execute_sparql(query)

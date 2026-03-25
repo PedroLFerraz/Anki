@@ -25,42 +25,79 @@ class ArtistRequest(BaseModel):
 
 @router.post("/generate")
 def generate_cards(req: GenerateRequest):
-    """Run the 3-agent pipeline and return generated cards."""
+    """Generate cards. Artwork decks use Wikidata; other decks use LLM."""
 
-    # 1. Get deck type config
     dt = repository.get_deck_type(req.deck_type)
     if not dt:
         return {"error": f"Unknown deck type: {req.deck_type}"}
 
+    # Artwork decks: use Wikidata (no LLM, no hallucinations)
+    if req.deck_type == "artwork":
+        from core.wikidata import query_artworks_by_topic, artworks_to_card_fields
+
+        artworks = query_artworks_by_topic(req.topic, limit=req.count)
+        if not artworks:
+            return {"error": f"No artworks found on Wikidata for '{req.topic}'"}
+
+        existing_cards = repository.get_cards(deck_type=req.deck_type)
+        existing_titles = {c.fields_json.get("Title", "").strip().lower() for c in existing_cards}
+        new_artworks = [a for a in artworks if a["title"].strip().lower() not in existing_titles]
+
+        if not new_artworks:
+            return {
+                "cards": [],
+                "message": "All artworks are already in the deck",
+                "total_found": len(artworks),
+                "skipped": len(artworks),
+            }
+
+        card_fields_list = artworks_to_card_fields(new_artworks)
+        saved_cards = []
+        for fields in card_fields_list:
+            card = Card(
+                deck_type=req.deck_type, fields_json=fields,
+                source_topic=req.topic, status="GENERATED",
+            )
+            card_id = repository.save_card(card)
+            saved_cards.append({
+                "id": card_id,
+                "fields": fields,
+                "status": "GENERATED",
+                "has_free_image": bool(fields.get("Image Source")),
+            })
+
+        return {
+            "cards": saved_cards,
+            "total_found": len(artworks),
+            "skipped": len(artworks) - len(new_artworks),
+            "new": len(new_artworks),
+        }
+
+    # Non-artwork decks: LLM pipeline
     field_names = [f["name"] for f in dt.fields_schema]
     field_config = {f["name"]: f["type"] for f in dt.fields_schema}
 
-    # 2. Get existing cards for context
     existing_cards, existing_embeddings = repository.get_existing_cards_with_embeddings(req.deck_type)
     existing_text = ", ".join(c.get("Title", "") for c in existing_cards if c.get("Title"))
     if not existing_text:
         existing_text = "No existing cards found."
 
-    # 4. Agent 1: Gap Analysis
     missing_concepts, persona = agents.analyze_knowledge_gaps(
         req.topic, existing_text, num=req.count
     )
 
-    # 5. Agent 2: Generate Cards
     raw = agents.generate_cards(missing_concepts, req.count, field_config, persona=persona)
     parsed = parsing.smart_parse(raw, field_names)
 
     if not parsed:
         return {"error": "Generation failed", "raw_output": raw}
 
-    # 6. Create run
     run = GenerationRun(
         topic=req.topic, deck_name=dt.name, deck_type=req.deck_type,
         persona=persona, total_generated=len(parsed),
     )
     run_id = repository.create_run(run)
 
-    # 7. Save cards with embeddings + duplicate detection
     saved_cards = []
     for card_fields in parsed:
         card_text = embeddings.card_text_for_embedding(card_fields)
