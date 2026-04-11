@@ -6,81 +6,100 @@ from pathlib import Path
 
 import genanki
 
-from core.cards import Card, DeckType
+from core.card_types import CARD_TYPES
 from core.config import EXPORTS_DIR, MEDIA_DIR
 
 logger = logging.getLogger(__name__)
 
-# Stable IDs (random but fixed so Anki recognizes updates on re-import)
-ARTWORK_MODEL_ID = 1607392319
-ARTWORK_DECK_ID = 2058400319
 
-
-def _build_genanki_model(deck_type: DeckType, model_id: int) -> genanki.Model:
-    """Build a genanki Model from a DeckType definition."""
-    fields = [{"name": f["name"]} for f in deck_type.fields_schema]
-    templates = [
-        {
-            "name": t.name,
-            "qfmt": t.front,
-            "afmt": t.back,
-        }
-        for t in deck_type.templates
-    ]
+def _build_model(card_type_def: dict) -> genanki.Model:
     return genanki.Model(
-        model_id,
-        "Art-a7e12",  # Match the real model name from the user's deck
-        fields=fields,
-        templates=templates,
-        css=deck_type.css,
+        card_type_def["model_id"],
+        card_type_def["name"],
+        fields=[{"name": f} for f in card_type_def["fields"]],
+        templates=[{
+            "name": "Card 1",
+            "qfmt": card_type_def["template_front"],
+            "afmt": card_type_def["template_back"],
+        }],
+        css=card_type_def["css"],
     )
 
 
-def export_cards(
-    cards: list[Card],
-    deck_type: DeckType,
-    deck_name: str = "Great Works of Art",
-    output_filename: str | None = None,
-) -> Path:
+def export_cards(cards: list[dict], deck_name: str = "Flashcards") -> Path:
+    """Export cards to an .apkg file. Handles both basic and detailed card types.
+
+    cards: list of dicts from repository.get_cards() with keys:
+        question, answer, card_type, extra_fields (dict)
     """
-    Export cards to an .apkg file.
-    Uses real Anki model/deck IDs from imported .apkg when available,
-    so the exported deck merges into the existing deck on import.
-    Returns the path to the generated file.
-    """
-    model_id = deck_type.anki_model_id or ARTWORK_MODEL_ID
-    deck_id = deck_type.anki_deck_id or ARTWORK_DECK_ID
-    model = _build_genanki_model(deck_type, model_id)
+    # Build models for each card type present
+    types_used = set(c.get("card_type", "basic") for c in cards)
+    models = {}
+    for t in types_used:
+        type_def = CARD_TYPES.get(t)
+        if type_def:
+            models[t] = _build_model(type_def)
+
+    # Use a unique deck ID based on deck name for stability
+    deck_id = abs(hash(deck_name)) % (10**10)
     deck = genanki.Deck(deck_id, deck_name)
 
     media_files = []
-    field_names = [f["name"] for f in deck_type.fields_schema]
 
     for card in cards:
-        fields = card.fields_json
-        field_values = []
+        card_type = card.get("card_type", "basic")
+        model = models.get(card_type)
+        if not model:
+            logger.warning("Unknown card type '%s', skipping card %s", card_type, card.get("id"))
+            continue
 
-        for fname in field_names:
-            value = fields.get(fname, "")
+        extra = card.get("extra_fields") or {}
 
-            # Image field: wrap in <img> tag if we have a downloaded file
-            if fname == "Artwork" and card.image_filename:
-                value = f'<img src="{card.image_filename}">'
-                img_path = MEDIA_DIR / card.image_filename
-                if img_path.exists():
-                    media_files.append(str(img_path))
+        if card_type == "detailed":
+            # Build image HTML
+            image_html = ""
+            image_filename = extra.get("image_filename")
+            if image_filename:
+                image_path = MEDIA_DIR / image_filename
+                if image_path.exists():
+                    image_html = f'<img src="{image_filename}">'
+                    media_files.append(str(image_path))
 
-            field_values.append(str(value))
+            fields = [
+                card["question"],
+                extra.get("summary", card["answer"]),
+                extra.get("explanation", ""),
+                image_html,
+                extra.get("reference", ""),
+            ]
+        elif card_type == "visual":
+            image_html = ""
+            image_filename = extra.get("image_filename")
+            if image_filename:
+                image_path = MEDIA_DIR / image_filename
+                if image_path.exists():
+                    image_html = f'<img src="{image_filename}">'
+                    media_files.append(str(image_path))
 
-        note = genanki.Note(model=model, fields=field_values)
+            if not image_html:
+                logger.warning("Visual card %s has no image, skipping export", card.get("id"))
+                continue
+
+            fields = [
+                image_html,
+                extra.get("title", card["question"]),
+                extra.get("explanation", card["answer"]),
+            ]
+        else:
+            # Basic: just Question, Answer
+            fields = [card["question"], card["answer"]]
+
+        note = genanki.Note(model=model, fields=fields)
         deck.add_note(note)
 
-    if not output_filename:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_name = deck_name.replace(" ", "_").lower()
-        output_filename = f"{safe_name}_{timestamp}.apkg"
-
-    output_path = EXPORTS_DIR / output_filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_name = deck_name.replace(" ", "_").lower()
+    output_path = EXPORTS_DIR / f"{safe_name}_{timestamp}.apkg"
 
     package = genanki.Package(deck)
     package.media_files = media_files

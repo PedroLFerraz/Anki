@@ -1,79 +1,10 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 
 import numpy as np
-
-from core.cards import Card, CardTemplate, DeckType, GenerationRun
 from storage.database import get_connection
 
-
-# --- Deck Types ---
-
-def get_deck_type(name: str) -> DeckType | None:
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("SELECT name, fields_schema, templates, css, anki_model_id, anki_deck_id FROM deck_types WHERE name = ?", (name,))
-    row = c.fetchone()
-    conn.close()
-    if not row:
-        return None
-    templates_raw = json.loads(row[2])
-    return DeckType(
-        name=row[0],
-        fields_schema=json.loads(row[1]),
-        templates=[CardTemplate(**t) for t in templates_raw],
-        css=row[3],
-        anki_model_id=row[4],
-        anki_deck_id=row[5],
-    )
-
-
-def get_all_deck_types() -> list[DeckType]:
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("SELECT name, fields_schema, templates, css, anki_model_id, anki_deck_id FROM deck_types")
-    rows = c.fetchall()
-    conn.close()
-    result = []
-    for r in rows:
-        templates_raw = json.loads(r[2])
-        result.append(DeckType(
-            name=r[0],
-            fields_schema=json.loads(r[1]),
-            templates=[CardTemplate(**t) for t in templates_raw],
-            css=r[3],
-            anki_model_id=r[4],
-            anki_deck_id=r[5],
-        ))
-    return result
-
-
-def update_deck_type_anki_ids(name: str, model_id: int, deck_id: int):
-    """Store the real Anki model/deck IDs extracted from an imported .apkg."""
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("UPDATE deck_types SET anki_model_id = ?, anki_deck_id = ? WHERE name = ?",
-              (model_id, deck_id, name))
-    conn.commit()
-    conn.close()
-
-
-# --- Cards ---
-
-def delete_cards_by_status(status: str, deck_type: str | None = None) -> int:
-    """Delete cards with the given status. Returns count of deleted cards."""
-    conn = get_connection()
-    c = conn.cursor()
-    if deck_type:
-        c.execute("DELETE FROM cards WHERE status = ? AND deck_type = ?", (status, deck_type))
-    else:
-        c.execute("DELETE FROM cards WHERE status = ?", (status,))
-    count = c.rowcount
-    conn.commit()
-    conn.close()
-    return count
 
 def _serialize_embedding(emb: np.ndarray | None) -> bytes | None:
     if emb is None:
@@ -87,22 +18,17 @@ def _deserialize_embedding(data: bytes | None) -> np.ndarray | None:
     return np.frombuffer(data, dtype=np.float32)
 
 
-def save_card(card: Card, embedding: np.ndarray | None = None) -> int:
+def save_card(
+    question: str, answer: str, topic: str,
+    embedding: np.ndarray | None = None, status: str = "GENERATED",
+    card_type: str = "basic", extra_fields: dict | None = None,
+) -> int:
     conn = get_connection()
     c = conn.cursor()
     c.execute(
-        """INSERT INTO cards (deck_type, fields_json, image_filename, audio_filename, embedding, source_topic, run_id, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            card.deck_type,
-            json.dumps(card.fields_json),
-            card.image_filename,
-            card.audio_filename,
-            _serialize_embedding(embedding),
-            card.source_topic,
-            card.run_id,
-            card.status,
-        ),
+        "INSERT INTO cards (question, answer, topic, embedding, status, card_type, extra_fields) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (question, answer, topic, _serialize_embedding(embedding), status,
+         card_type, json.dumps(extra_fields) if extra_fields else None),
     )
     card_id = c.lastrowid
     conn.commit()
@@ -110,11 +36,10 @@ def save_card(card: Card, embedding: np.ndarray | None = None) -> int:
     return card_id
 
 
-def save_card_fields(card_id: int, fields_json: dict):
-    """Update the fields_json for a card (e.g., to add a search link)."""
+def update_card_extra_fields(card_id: int, extra_fields: dict):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("UPDATE cards SET fields_json = ? WHERE id = ?", (json.dumps(fields_json), card_id))
+    c.execute("UPDATE cards SET extra_fields = ? WHERE id = ?", (json.dumps(extra_fields), card_id))
     conn.commit()
     conn.close()
 
@@ -127,111 +52,95 @@ def update_card_status(card_id: int, status: str):
     conn.close()
 
 
-def update_card_media(card_id: int, image_filename: str | None = None, audio_filename: str | None = None):
-    conn = get_connection()
-    c = conn.cursor()
-    if image_filename is not None:
-        c.execute("UPDATE cards SET image_filename = ? WHERE id = ?", (image_filename, card_id))
-    if audio_filename is not None:
-        c.execute("UPDATE cards SET audio_filename = ? WHERE id = ?", (audio_filename, card_id))
-    conn.commit()
-    conn.close()
-
-
-def get_cards(deck_type: str | None = None, status: str | None = None) -> list[Card]:
+def get_cards(topic: str | None = None, status: str | None = None) -> list[dict]:
     conn = get_connection()
     c = conn.cursor()
 
-    query = "SELECT id, deck_type, fields_json, image_filename, audio_filename, created_at, source_topic, run_id, status FROM cards WHERE 1=1"
+    query = "SELECT id, question, answer, topic, status, created_at, card_type, extra_fields FROM cards WHERE 1=1"
     params = []
-    if deck_type:
-        query += " AND deck_type = ?"
-        params.append(deck_type)
+    if topic:
+        query += " AND topic = ?"
+        params.append(topic)
     if status:
         query += " AND status = ?"
         params.append(status)
     query += " ORDER BY id DESC"
 
     c.execute(query, params)
-    rows = c.fetchall()
+    cols = [desc[0] for desc in c.description]
+    rows = []
+    for row in c.fetchall():
+        d = dict(zip(cols, row))
+        # Parse extra_fields JSON
+        if d.get("extra_fields"):
+            d["extra_fields"] = json.loads(d["extra_fields"])
+        else:
+            d["extra_fields"] = {}
+        rows.append(d)
     conn.close()
-
-    return [
-        Card(
-            id=r[0], deck_type=r[1], fields_json=json.loads(r[2]),
-            image_filename=r[3], audio_filename=r[4], created_at=r[5],
-            source_topic=r[6], run_id=r[7], status=r[8],
-        )
-        for r in rows
-    ]
+    return rows
 
 
-def get_existing_cards_with_embeddings(deck_type: str) -> tuple[list[dict], list[np.ndarray | None]]:
-    """Returns (list_of_fields_dicts, list_of_embeddings) for duplicate detection."""
+def get_context_cards_with_embeddings() -> tuple[list[dict], list[np.ndarray | None]]:
+    """Returns (cards, embeddings) from CONTEXT cards only (imported decks)."""
     conn = get_connection()
     c = conn.cursor()
-    c.execute(
-        "SELECT fields_json, embedding FROM cards WHERE deck_type = ? AND status != 'REJECTED'",
-        (deck_type,),
-    )
+
+    c.execute("SELECT question, answer, topic, embedding FROM cards WHERE status = 'CONTEXT'")
     rows = c.fetchall()
     conn.close()
 
     cards = []
     embeddings = []
-    for fields_str, emb_bytes in rows:
-        cards.append(json.loads(fields_str))
+    for q, a, t, emb_bytes in rows:
+        cards.append({"Question": q, "Answer": a, "topic": t})
         embeddings.append(_deserialize_embedding(emb_bytes))
     return cards, embeddings
 
 
-# --- Runs ---
-
-def create_run(run: GenerationRun) -> int:
+def save_context_cards(cards: list[dict], source: str = "import") -> int:
+    """Bulk-insert imported cards as CONTEXT. Returns count saved."""
     conn = get_connection()
     c = conn.cursor()
-    c.execute(
-        """INSERT INTO runs (topic, deck_name, deck_type, persona, total_generated, total_accepted)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (run.topic, run.deck_name, run.deck_type, run.persona, run.total_generated, run.total_accepted),
-    )
-    run_id = c.lastrowid
+    count = 0
+    for card in cards:
+        q = card.get("question", "").strip()
+        a = card.get("answer", "").strip()
+        if not q:
+            continue
+        c.execute(
+            "INSERT INTO cards (question, answer, topic, status, card_type) VALUES (?, ?, ?, 'CONTEXT', 'context')",
+            (q, a, source),
+        )
+        count += 1
     conn.commit()
     conn.close()
-    return run_id
+    return count
 
 
-def update_run_accepted(run_id: int, total_accepted: int):
+def delete_context_cards() -> int:
+    """Delete all CONTEXT cards."""
+    return delete_cards_by_status("CONTEXT")
+
+
+def get_context_count() -> int:
+    """Return the number of CONTEXT cards."""
     conn = get_connection()
     c = conn.cursor()
-    c.execute("UPDATE runs SET total_accepted = ? WHERE run_id = ?", (total_accepted, run_id))
+    c.execute("SELECT COUNT(*) FROM cards WHERE status = 'CONTEXT'")
+    count = c.fetchone()[0]
+    conn.close()
+    return count
+
+
+def delete_cards_by_status(status: str, topic: str | None = None) -> int:
+    conn = get_connection()
+    c = conn.cursor()
+    if topic:
+        c.execute("DELETE FROM cards WHERE status = ? AND topic = ?", (status, topic))
+    else:
+        c.execute("DELETE FROM cards WHERE status = ?", (status,))
+    count = c.rowcount
     conn.commit()
     conn.close()
-
-
-# --- Analytics ---
-
-def get_analytics(deck_type: str | None = None) -> list[dict]:
-    conn = get_connection()
-    c = conn.cursor()
-
-    query = """
-        SELECT
-            c.source_topic as topic,
-            c.deck_type,
-            COUNT(*) as total_cards,
-            SUM(CASE WHEN c.status IN ('ACCEPTED', 'EXPORTED') THEN 1 ELSE 0 END) as accepted,
-            SUM(CASE WHEN c.status = 'REJECTED' THEN 1 ELSE 0 END) as rejected
-        FROM cards c
-    """
-    params = []
-    if deck_type:
-        query += " WHERE c.deck_type = ?"
-        params.append(deck_type)
-    query += " GROUP BY c.source_topic, c.deck_type"
-
-    c.execute(query, params)
-    cols = [desc[0] for desc in c.description]
-    rows = [dict(zip(cols, row)) for row in c.fetchall()]
-    conn.close()
-    return rows
+    return count
