@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -13,6 +15,9 @@ logger = logging.getLogger(__name__)
 
 
 def _build_model(card_type_def: dict) -> genanki.Model:
+    kwargs = {}
+    if card_type_def.get("model_type"):
+        kwargs["model_type"] = card_type_def["model_type"]
     return genanki.Model(
         card_type_def["model_id"],
         card_type_def["name"],
@@ -23,6 +28,7 @@ def _build_model(card_type_def: dict) -> genanki.Model:
             "afmt": card_type_def["template_back"],
         }],
         css=card_type_def["css"],
+        **kwargs,
     )
 
 
@@ -40,8 +46,8 @@ def export_cards(cards: list[dict], deck_name: str = "Flashcards") -> Path:
         if type_def:
             models[t] = _build_model(type_def)
 
-    # Use a unique deck ID based on deck name for stability
-    deck_id = abs(hash(deck_name)) % (10**10)
+    # Use a stable deck ID based on deck name (md5 avoids PYTHONHASHSEED randomisation)
+    deck_id = int(hashlib.md5(deck_name.encode()).hexdigest(), 16) % (10**10)
     deck = genanki.Deck(deck_id, deck_name)
 
     media_files = []
@@ -90,6 +96,15 @@ def export_cards(cards: list[dict], deck_name: str = "Flashcards") -> Path:
                 extra.get("title", card["question"]),
                 extra.get("explanation", card["answer"]),
             ]
+        elif card_type == "cloze":
+            cloze_text = extra.get("text", card["answer"])
+            if "{{c1::" not in cloze_text:
+                logger.warning("Cloze card %s has no cloze markers, skipping export", card.get("id"))
+                continue
+            fields = [
+                cloze_text,
+                extra.get("extra", ""),
+            ]
         else:
             # Basic: just Question, Answer
             fields = [card["question"], card["answer"]]
@@ -98,7 +113,8 @@ def export_cards(cards: list[dict], deck_name: str = "Flashcards") -> Path:
         deck.add_note(note)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_name = deck_name.replace(" ", "_").lower()
+    safe_name = re.sub(r'[<>:"/\\|?*]', '', deck_name).replace(" ", "_").lower()
+    safe_name = safe_name or "deck"
     output_path = EXPORTS_DIR / f"{safe_name}_{timestamp}.apkg"
 
     package = genanki.Package(deck)

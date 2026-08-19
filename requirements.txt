@@ -4,6 +4,9 @@ openai
 pydantic-settings
 python-dotenv
 numpy
-duckduckgo-search
+ddgs
 Pillow
 requests
+fastapi
+uvicorn[standard]
+python-multipart

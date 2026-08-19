@@ -31,6 +31,25 @@ def _get_ollama_client():
     return _ollama_client
 
 
+def check_llm_connection() -> str | None:
+    """Check if the LLM provider is reachable. Returns error message or None if OK."""
+    provider = settings.llm_provider
+    try:
+        if provider == "gemini":
+            client = _get_gemini_client()
+            if not client:
+                return "No GOOGLE_API_KEY configured. Set it in .env file."
+            return None
+        else:
+            import requests
+            resp = requests.get(f"{settings.ollama_base_url.rstrip('/v1')}/api/tags", timeout=5)
+            resp.raise_for_status()
+            return None
+    except Exception as e:
+        url = settings.ollama_base_url if provider == "ollama" else "Gemini API"
+        return f"Cannot connect to {provider} at {url}: {e}"
+
+
 def _generate_json(prompt: str, max_retries: int = 3) -> dict:
     """Generate JSON content with automatic retry on rate limits and parse errors."""
     provider = settings.llm_provider
@@ -89,6 +108,8 @@ def generate_cards(topic: str, num: int, existing_cards_text: str, card_type: st
         gen_fn = _generate_visual
     elif card_type == "detailed":
         gen_fn = _generate_detailed
+    elif card_type == "cloze":
+        gen_fn = _generate_cloze
     else:
         gen_fn = _generate_basic
     all_cards = []
@@ -327,3 +348,93 @@ Respond with JSON:
     except Exception as e:
         logger.error("Visual card generation failed: %s", e)
         return []
+
+
+def _generate_cloze(topic: str, num: int, existing_cards_text: str) -> list[dict]:
+    prompt = f"""You are creating cloze deletion flashcards. Cloze cards hide a key term in a sentence so the learner must recall it.
+
+TOPIC: "{topic}"
+
+THE USER ALREADY HAS THESE CARDS:
+'''
+{existing_cards_text}
+'''
+
+Generate exactly {num} cloze deletion cards. Each card MUST have:
+- text: A factual sentence with ONE key term wrapped in {{{{c1::term}}}}
+- extra: An optional short hint or context (one sentence max)
+
+EXAMPLES:
+{{
+  "cards": [
+    {{
+      "text": "The {{{{c1::mitochondria}}}} is the powerhouse of the cell.",
+      "extra": "Found in eukaryotic cells"
+    }},
+    {{
+      "text": "{{{{c1::Python}}}} uses indentation instead of braces for code blocks.",
+      "extra": "Created by Guido van Rossum"
+    }},
+    {{
+      "text": "The speed of light is approximately {{{{c1::300,000}}}} km/s.",
+      "extra": ""
+    }}
+  ]
+}}
+
+RULES:
+1. Each sentence must be a complete, factual statement.
+2. Hide exactly ONE key term per card using {{{{c1::term}}}} syntax.
+3. The hidden term should be the most important word or phrase.
+4. Do NOT repeat topics the user already has.
+5. Use plain text only.
+
+Respond with JSON only."""
+
+    try:
+        result = _generate_json(prompt)
+        cards = result.get("cards", [])
+        if not isinstance(cards, list):
+            return []
+
+        cleaned = []
+        for card in cards:
+            if not isinstance(card, dict):
+                continue
+            text = _clean_field(str(card.get("text", "")))
+            extra = _clean_field(str(card.get("extra", "")))
+
+            # Fix common cloze syntax issues from small models
+            text = _fix_cloze_syntax(text)
+
+            if "{{c1::" not in text:
+                logger.warning("Skipping card without cloze marker: %r", text[:60])
+                continue
+
+            if len(text) < 10:
+                logger.warning("Skipping short cloze card: %r", text)
+                continue
+
+            # For dedup: use the text without cloze markers as the question
+            plain_text = re.sub(r'\{\{c\d+::(.*?)\}\}', r'\1', text)
+            cleaned.append({
+                "question": plain_text,  # for dedup
+                "answer": text,          # the actual cloze text
+                "text": text,
+                "extra": extra,
+            })
+        return cleaned
+    except Exception as e:
+        logger.error("Cloze card generation failed: %s", e)
+        return []
+
+
+def _fix_cloze_syntax(text: str) -> str:
+    """Fix common cloze syntax errors from small models."""
+    # Fix single braces: {c1::term} -> {{c1::term}}
+    text = re.sub(r'(?<!\{)\{(c\d+::.*?)\}(?!\})', r'{{\1}}', text)
+    # Fix triple+ braces: {{{c1::term}}} -> {{c1::term}}
+    text = re.sub(r'\{{3,}(c\d+::.*?)\}{3,}', r'{{\1}}', text)
+    # Fix missing c1:: prefix: {{term}} -> {{c1::term}} (only if no cN:: present)
+    text = re.sub(r'\{\{(?!c\d+::)(.*?)\}\}', r'{{c1::\1}}', text)
+    return text
