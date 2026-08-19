@@ -48,8 +48,8 @@ def check_llm_connection() -> str | None:
 
     if cfg["needs_key"] and not cfg["api_key"]:
         return (
-            f"No API key for '{provider}'. Set LLM_API_KEY in .env — "
-            f"see .env.example for where to get a free one."
+            f"No API key for '{provider}'. Set LLM_API_KEY in .env "
+            f"(see .env.example for where to get a free one)."
         )
 
     base = (cfg["base_url"] or "").rstrip("/")

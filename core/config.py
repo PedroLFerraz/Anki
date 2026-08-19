@@ -30,11 +30,14 @@ PROVIDERS: dict[str, dict] = {
     },
     "groq": {
         "label": "Groq",
+        # Verified against console.groq.com/docs/models. Groq retires model IDs
+        # fairly often — `python cli.py providers` will surface a 404 as a
+        # failed connection check.
         "base_url": "https://api.groq.com/openai/v1",
-        "model": "llama-3.3-70b-versatile",
+        "model": "openai/gpt-oss-120b",
         "embedding_model": None,
         "needs_key": True,
-        "notes": "Very fast. No embeddings endpoint.",
+        "notes": "Recommended. 120B open-weight model, very fast. No embeddings.",
     },
     "nvidia": {
         "label": "NVIDIA NIM",

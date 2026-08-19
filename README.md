@@ -108,6 +108,16 @@ Cards from the imported deck are stored with status `CONTEXT` and used during du
 python cli.py clear-context
 ```
 
+### `providers` — Show LLM providers and test the configured one
+
+```bash
+python cli.py providers
+```
+
+Lists the available presets, prints the resolved generation and embedding
+configuration (API keys masked), and probes the endpoint. Exits non-zero if the
+provider is unreachable.
+
 ## Configuration
 
 Copy `.env.example` to `.env` and edit as needed. All settings have defaults that work with Ollama out of the box.
@@ -116,29 +126,51 @@ Copy `.env.example` to `.env` and edit as needed. All settings have defaults tha
 cp .env.example .env
 ```
 
-### Choosing a provider
+### Recommended setup (free)
 
-Every provider except Gemini speaks the OpenAI chat-completions protocol, so
-switching is two lines in `.env`:
+**Groq for generation, local Ollama for embeddings.** Groq serves
+`openai/gpt-oss-120b` free with no credit card — a much stronger model than
+`phi4-mini`, and card quality is mostly a function of model quality. It has no
+embeddings endpoint, so those fall back to Ollama automatically, where they are
+free and unlimited.
+
+1. Get a key at [console.groq.com/keys](https://console.groq.com/keys)
+2. In `.env`:
 
 ```
 LLM_PROVIDER=groq
 LLM_API_KEY=your_key_here
 ```
 
+3. Confirm it works:
+
+```bash
+python cli.py providers
+```
+
+That prints the resolved configuration and probes the endpoint, so a bad key or
+a retired model ID shows up immediately rather than mid-generation.
+
+### All presets
+
+Every provider except Gemini speaks the OpenAI chat-completions protocol.
+
 | Preset | Key from | Embeddings | Notes |
 |---|---|---|---|
 | `ollama` | — | Yes | Local, unlimited, offline. The default. |
-| `groq` | [console.groq.com](https://console.groq.com/keys) | No | Fast. |
-| `nvidia` | [build.nvidia.com](https://build.nvidia.com) | Yes | Only preset serving both chat and embeddings. |
+| `groq` | [console.groq.com](https://console.groq.com/keys) | No | Recommended. `openai/gpt-oss-120b`, very fast. |
+| `nvidia` | [build.nvidia.com](https://build.nvidia.com) | Yes | Serves both chat and embeddings. |
 | `openrouter` | [openrouter.ai](https://openrouter.ai/keys) | No | Many free models, low per-model daily caps. |
 | `sambanova` | [cloud.sambanova.ai](https://cloud.sambanova.ai) | No | Daily token budget, not a request cap. |
 | `mistral` | [console.mistral.ai](https://console.mistral.ai) | Yes | Free tier is monthly credits. |
 | `gemini` | [aistudio.google.com](https://aistudio.google.com/apikey) | Yes | Uses google-genai, not the OpenAI protocol. |
 
-Free-tier limits move constantly — check the provider's own docs rather than
-trusting this table. [awesome-free-llm-apis](https://github.com/mnfst/awesome-free-llm-apis)
-tracks current numbers.
+Free-tier limits and model IDs move constantly — Groq had already retired
+`llama-3.3-70b-versatile` by the time this table was written. Treat it as a
+starting point, verify with `python cli.py providers`, and override `LLM_MODEL`
+if a preset has gone stale.
+[awesome-free-llm-apis](https://github.com/mnfst/awesome-free-llm-apis) tracks
+current numbers.
 
 Any other OpenAI-compatible endpoint works without a preset:
 

@@ -390,6 +390,53 @@ def cmd_clear_context(args):
         print("No context cards to clear.")
 
 
+def cmd_providers(args):
+    """Show available providers and check the configured one actually answers."""
+    from core.config import NATIVE_PROVIDERS, PROVIDERS, settings
+
+    print("\nAvailable presets (set LLM_PROVIDER in .env):\n")
+    for name, preset in sorted(PROVIDERS.items()):
+        key_note = "needs LLM_API_KEY" if preset["needs_key"] else "no key needed"
+        emb = "embeddings" if preset["embedding_model"] else "no embeddings"
+        print(f"  {name:<12} {preset['label']}")
+        print(f"  {'':<12} {key_note}, {emb}")
+        print(f"  {'':<12} {preset['notes']}")
+    for name in sorted(NATIVE_PROVIDERS):
+        print(f"  {name:<12} Google Gemini")
+        print(f"  {'':<12} needs GOOGLE_API_KEY, embeddings")
+
+    llm = settings.resolve_llm()
+    emb = settings.resolve_embedding()
+
+    def _mask(key: str) -> str:
+        if not key or key == "ollama":
+            return "(none)"
+        return f"set, ...{key[-4:]}" if len(key) > 4 else "set"
+
+    print("\nCurrent configuration:\n")
+    print("  Generation")
+    print(f"    provider   {llm['provider']}")
+    print(f"    endpoint   {llm['base_url'] or 'google-genai SDK'}")
+    print(f"    model      {llm['model']}")
+    print(f"    api key    {_mask(llm['api_key'])}")
+
+    print("  Embeddings")
+    if emb["provider"]:
+        print(f"    provider   {emb['provider']}")
+        print(f"    endpoint   {emb['base_url'] or 'google-genai SDK'}")
+        print(f"    model      {emb['model']}")
+        print(f"    api key    {_mask(emb['api_key'])}")
+    else:
+        print("    unavailable - dedup will use fuzzy text matching only")
+
+    print("\nChecking connection...")
+    err = agents.check_llm_connection()
+    if err:
+        print(f"  FAILED: {err}")
+        sys.exit(1)
+    print("  OK - provider reachable.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Anki Flashcard Generator")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
@@ -430,6 +477,10 @@ def main():
     # clear-context
     subparsers.add_parser("clear-context", help="Remove all imported context cards")
 
+    # providers
+    subparsers.add_parser("providers", aliases=["provider"],
+                          help="Show LLM providers and test the configured one")
+
     args = parser.parse_args()
 
     if args.command in ("generate", "gen"):
@@ -444,6 +495,8 @@ def main():
         cmd_import_context(args)
     elif args.command == "clear-context":
         cmd_clear_context(args)
+    elif args.command in ("providers", "provider"):
+        cmd_providers(args)
     else:
         parser.print_help()
 
