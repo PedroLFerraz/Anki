@@ -27,7 +27,79 @@ logger = logging.getLogger(__name__)
 _session_cards: list[dict] = []
 
 
+def _edit_card(card: dict, card_type: str):
+    """Inline edit a card's fields. Empty input keeps original value."""
+    print(f"\n  Editing card {card['id']} (press Enter to keep current value):")
+
+    new_q = input(f"  Question [{(card.get('question') or '')[:60]}]: ").strip()
+    if new_q:
+        card["question"] = new_q
+
+    if card_type == "visual":
+        new_title = input(f"  Title [{(card.get('title') or '')[:60]}]: ").strip()
+        if new_title:
+            card["title"] = new_title
+            card["question"] = new_title  # title is stored as question
+        new_exp = input(f"  Explanation [{(card.get('explanation') or '')[:60]}]: ").strip()
+        if new_exp:
+            card["explanation"] = new_exp
+            card["answer"] = new_exp
+    elif card_type == "cloze":
+        cloze_text = card.get("text") or card.get("answer") or ""
+        new_text = input(f"  Cloze text [{cloze_text[:60]}]: ").strip()
+        if new_text:
+            card["text"] = new_text
+            card["answer"] = new_text
+        new_extra = input(f"  Hint [{(card.get('extra') or '')[:60]}]: ").strip()
+        if new_extra:
+            card["extra"] = new_extra
+    elif card_type == "detailed":
+        new_sum = input(f"  Summary [{(card.get('summary') or '')[:60]}]: ").strip()
+        if new_sum:
+            card["summary"] = new_sum
+            card["answer"] = new_sum
+        new_exp = input(f"  Explanation [{(card.get('explanation') or '')[:60]}]: ").strip()
+        if new_exp:
+            card["explanation"] = new_exp
+    else:
+        new_a = input(f"  Answer [{(card.get('answer') or '')[:60]}]: ").strip()
+        if new_a:
+            card["answer"] = new_a
+
+    # Persist to DB
+    extra = card.get("extra_fields") or {}
+    if card_type == "detailed":
+        extra["summary"] = card.get("summary", "")
+        extra["explanation"] = card.get("explanation", "")
+    elif card_type == "visual":
+        extra["title"] = card.get("title", "")
+        extra["explanation"] = card.get("explanation", "")
+    elif card_type == "cloze":
+        extra["text"] = card.get("text", card.get("answer", ""))
+        extra["extra"] = card.get("extra", "")
+    repository.update_card_content(card["id"], card["question"], card["answer"], extra)
+    print("  Updated.")
+
+
+def _trunc(s: str, n: int = 80) -> str:
+    """Truncate a string to n chars with an ellipsis indicator."""
+    return s[:n] + "..." if len(s) > n else s
+
+
 def cmd_generate(args):
+    if not args.topic.strip():
+        print("Error: Topic cannot be empty.")
+        sys.exit(1)
+    if args.count <= 0:
+        print("Error: Count must be greater than 0.")
+        sys.exit(1)
+
+    # Check LLM connectivity before doing any work
+    conn_err = agents.check_llm_connection()
+    if conn_err:
+        print(f"Error: {conn_err}")
+        sys.exit(1)
+
     card_type = args.type
     # Only imported context counts as "existing" — each session starts fresh
     ctx_cards, ctx_embeddings = repository.get_context_cards_with_embeddings()
@@ -48,28 +120,6 @@ def cmd_generate(args):
     if not cards:
         print("Generation failed — no cards returned.")
         sys.exit(1)
-
-    # For detailed/visual cards: download images
-    if card_type in ("detailed", "visual"):
-        import time
-        print(f"Searching for images...")
-        for i, card in enumerate(cards):
-            query = card.get("image_query", "")
-            if query:
-                if i > 0:
-                    time.sleep(3)  # avoid DuckDuckGo rate limits
-                filename = images.search_and_download(query)
-                card["image_filename"] = filename
-                status = "found" if filename else "not found"
-                print(f"  [{status}] {query}")
-
-        # Visual cards without images are useless — filter them out
-        if card_type == "visual":
-            before = len(cards)
-            cards = [c for c in cards if c.get("image_filename")]
-            skipped = before - len(cards)
-            if skipped:
-                print(f"  Skipped {skipped} card(s) with no image found.")
 
     # Dedup against context + session cards
     dedup_cards = list(ctx_cards) + list(_session_cards)
@@ -103,29 +153,67 @@ def cmd_generate(args):
                 "image_query": card.get("image_query", ""),
                 "image_filename": card.get("image_filename"),
             }
+        elif card_type == "cloze":
+            extra_fields = {
+                "text": card.get("text", card.get("answer", "")),
+                "extra": card.get("extra", ""),
+            }
 
         card_id = repository.save_card(
             question=card["question"], answer=card["answer"],
             topic=args.topic, embedding=emb, status=status,
             card_type=card_type, extra_fields=extra_fields,
         )
-        saved.append({"id": card_id, "is_dup": is_dup, "reason": reason, **card})
+        saved.append({"id": card_id, "is_dup": is_dup, "reason": reason,
+                      "extra_fields": extra_fields, **card})
 
+        _session_cards.append({"Question": card["question"], "Answer": card["answer"]})
         if not is_dup:
             dedup_cards.append({"Question": card["question"], "Answer": card["answer"]})
             dedup_embeddings.append(emb)
-            _session_cards.append({"Question": card["question"], "Answer": card["answer"]})
+
+    # Download images AFTER dedup — only for non-duplicate cards (concurrent)
+    if card_type in ("detailed", "visual"):
+        non_dup_saved = [c for c in saved if not c["is_dup"]]
+        queries = [(c.get("image_query", ""), c["id"]) for c in non_dup_saved if c.get("image_query")]
+        if queries:
+            print(f"\nSearching for images ({len(queries)} cards)...")
+            results = images.search_and_download_batch(queries)
+            for card in non_dup_saved:
+                filename = results.get(card["id"])
+                card["image_filename"] = filename
+                status_str = "found" if filename else "not found"
+                query = card.get("image_query", "")
+                if query:
+                    print(f"  [{status_str}] {query}")
+                if filename:
+                    extra = card.get("extra_fields") or {}
+                    extra["image_filename"] = filename
+                    repository.update_card_extra_fields(card["id"], extra)
+
+        # Visual cards without images are useless — mark them as REJECTED
+        if card_type == "visual":
+            for card in non_dup_saved:
+                if not card.get("image_filename"):
+                    repository.update_card_status(card["id"], "REJECTED")
+                    card["no_image"] = True
+            skipped = sum(1 for c in non_dup_saved if c.get("no_image"))
+            if skipped:
+                print(f"  Skipped {skipped} visual card(s) with no image found.")
 
     # Display
     print(f"\n{'='*60}")
     print(f"Generated {len(saved)} cards:\n")
 
     for idx, card in enumerate(saved):
-        dup_tag = " [DUPLICATE]" if card["is_dup"] else ""
-        img_tag = ""
+        tag = ""
+        if card["is_dup"]:
+            tag = " [DUPLICATE]"
+        elif card.get("no_image"):
+            tag = " [NO IMAGE]"
         if card_type in ("detailed", "visual") and card.get("image_filename"):
-            img_tag = " [IMG]"
-        print(f"--- Card {idx + 1}{dup_tag}{img_tag} ---")
+            tag = " [IMG]"
+        print(f"--- Card {idx + 1}{tag} ---")
         if card["is_dup"]:
             print(f"  Reason: {card['reason']}")
         if card_type == "visual":
@@ -135,14 +223,21 @@ def cmd_generate(args):
             print(f"  Q: {card['question']}")
             print(f"  Summary: {card.get('summary', '')}")
             print(f"  Explanation: {card.get('explanation', '')[:120]}...")
+        elif card_type == "cloze":
+            print(f"  Cloze: {_trunc(card.get('text', card.get('answer', '')))}")
+            if card.get("extra"):
+                print(f"  Hint: {_trunc(card['extra'])}")
         else:
             print(f"  Q: {card['question']}")
             print(f"  A: {card['answer']}")
         print()
 
-    non_dups = [c for c in saved if not c["is_dup"]]
+    non_dups = [c for c in saved if not c["is_dup"] and not c.get("no_image")]
     if not non_dups:
-        print("All cards are duplicates.")
+        if any(c.get("no_image") for c in saved):
+            print("All cards failed to find images. Try again later (DuckDuckGo rate limit).")
+        else:
+            print("All cards are duplicates.")
         return
 
     print(f"{len(non_dups)} new cards.")
@@ -151,17 +246,28 @@ def cmd_generate(args):
     accepted_ids = []
     if answer in ("", "y", "yes"):
         accepted_ids = [c["id"] for c in non_dups]
-    elif answer == "pick":
+    elif answer in ("pick", "p"):
         for c in non_dups:
-            choice = input(f"  Accept: {c['question'][:60]}...? [Y/n] ").strip().lower()
+            choice = input(f"  [{c['id']}] {c['question'][:55]}? [Y/n/e(dit)] ").strip().lower()
             if choice in ("", "y", "yes"):
                 accepted_ids.append(c["id"])
+            elif choice in ("e", "edit"):
+                _edit_card(c, card_type)
+                accepted_ids.append(c["id"])
     else:
+        # User declined all — mark non-duplicates as REJECTED
+        for c in non_dups:
+            repository.update_card_status(c["id"], "REJECTED")
         print("No cards accepted.")
         return
 
+    accepted_set = set(accepted_ids)
     for card_id in accepted_ids:
         repository.update_card_status(card_id, "ACCEPTED")
+    # Mark non-accepted non-duplicates as REJECTED
+    for c in non_dups:
+        if c["id"] not in accepted_set:
+            repository.update_card_status(c["id"], "REJECTED")
 
     print(f"\nAccepted {len(accepted_ids)} cards.")
 
@@ -209,14 +315,18 @@ def cmd_list(args):
         has_img = "[IMG] " if extra.get("image_filename") else ""
         print(f"  [{card['id']}] ({card['status']}) [{ct}] {has_img}{card['topic'] or '-'}")
         if ct == "visual":
-            print(f"    Title: {extra.get('title', card['question'])[:80]}")
-            print(f"    Explanation: {extra.get('explanation', card['answer'])[:80]}")
+            print(f"    Title: {_trunc(extra.get('title', card['question']))}")
+            print(f"    Explanation: {_trunc(extra.get('explanation', card['answer']))}")
+        elif ct == "cloze":
+            print(f"    Cloze: {_trunc(extra.get('text', card['answer']))}")
+            if extra.get("extra"):
+                print(f"    Hint: {_trunc(extra['extra'])}")
         elif ct == "detailed" and extra.get("summary"):
             print(f"    Q: {card['question']}")
-            print(f"    S: {extra['summary'][:80]}")
+            print(f"    S: {_trunc(extra['summary'])}")
         else:
             print(f"    Q: {card['question']}")
-            print(f"    A: {card['answer'][:80]}")
+            print(f"    A: {_trunc(card['answer'])}")
         print()
 
 
@@ -225,7 +335,10 @@ def cmd_export(args):
 
 
 def cmd_clear(args):
-    statuses = args.status.split(",") if args.status else ["GENERATED", "REJECTED", "DUPLICATE"]
+    if args.all:
+        statuses = ["GENERATED", "REJECTED", "DUPLICATE", "ACCEPTED", "EXPORTED", "CONTEXT"]
+    else:
+        statuses = args.status.split(",") if args.status else ["GENERATED", "REJECTED", "DUPLICATE"]
     total = 0
     for status in statuses:
         count = repository.delete_cards_by_status(status.strip(), topic=args.topic)
@@ -255,7 +368,7 @@ def cmd_import_context(args):
     print(f"Importing {args.file}...")
     try:
         deck_name, cards = apkg_import.import_apkg(args.file)
-    except (FileNotFoundError, ValueError) as e:
+    except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
 
@@ -285,8 +398,8 @@ def main():
     gen = subparsers.add_parser("generate", aliases=["gen"], help="Generate flashcards for a topic")
     gen.add_argument("topic", help="Topic to generate cards about")
     gen.add_argument("--count", "-n", type=int, default=5, help="Number of cards (default: 5)")
-    gen.add_argument("--type", choices=["basic", "detailed", "visual"], default="basic",
-                     help="Card type: basic (Q&A), detailed (summary + explanation + image), or visual (image front, explanation back)")
+    gen.add_argument("--type", choices=["basic", "detailed", "visual", "cloze"], default="basic",
+                     help="Card type: basic (Q&A), detailed (summary + explanation + image), visual (image front), or cloze (fill-in-the-blank)")
     gen.add_argument("--deck-name", "-d", default="Flashcards", help="Deck name in Anki")
     gen.add_argument("--no-embeddings", action="store_true", help="Skip embedding-based dedup")
 
@@ -304,6 +417,8 @@ def main():
     clr.add_argument("--topic", "-t", help="Only clear cards for this topic")
     clr.add_argument("--status", "-s", default="GENERATED,REJECTED,DUPLICATE",
                      help="Statuses to clear (comma-separated)")
+    clr.add_argument("--all", action="store_true",
+                     help="Clear ALL cards including accepted, exported, and context")
 
     # import-context
     imp = subparsers.add_parser("import-context", aliases=["import"],

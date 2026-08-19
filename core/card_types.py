@@ -134,10 +134,32 @@ VISUAL = {
 }""",
 }
 
+CLOZE = {
+    "name": "cloze",
+    "model_id": 1607392323,
+    "model_type": 1,  # genanki cloze model type
+    "fields": ["Text", "Extra"],
+    "template_front": "{{cloze:Text}}",
+    "template_back": "{{cloze:Text}}<br>{{Extra}}",
+    "css": """.card {
+  font-family: arial;
+  font-size: 20px;
+  text-align: center;
+  color: #e0e0e0;
+  background-color: #1a1a2e;
+  line-height: 1.6;
+}
+.cloze {
+  font-weight: bold;
+  color: #4fc3f7;
+}""",
+}
+
 CARD_TYPES = {
     "basic": BASIC,
     "detailed": DETAILED,
     "visual": VISUAL,
+    "cloze": CLOZE,
 }
 
 

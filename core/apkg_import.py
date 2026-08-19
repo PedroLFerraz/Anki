@@ -32,6 +32,8 @@ def import_apkg(apkg_path: str | Path) -> tuple[str, list[dict]]:
 
         db_path = Path(tmpdir) / "collection.anki2"
         if not db_path.exists():
+            db_path = Path(tmpdir) / "collection.anki21"
+        if not db_path.exists():
             db_path = Path(tmpdir) / "collection.anki21b"
         if not db_path.exists():
             raise ValueError("No collection database found in .apkg file")
@@ -52,8 +54,10 @@ def _extract_deck_name(conn: sqlite3.Connection) -> str:
         if row:
             decks = json.loads(row[0])
             for deck_id, deck in decks.items():
+                if deck_id == "1":
+                    continue  # skip Anki's built-in default deck (ID 1)
                 name = deck.get("name", "")
-                if name and name != "Default":
+                if name:
                     return name
     except Exception as e:
         logger.warning("Could not extract deck name: %s", e)

@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Anki Flashcard Generator</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0f0f1a;
+  --surface: #1a1a2e;
+  --surface2: #222240;
+  --border: #2d2d50;
+  --text: #e0e0e0;
+  --text-dim: #8888aa;
+  --accent: #4fc3f7;
+  --accent-hover: #81d4fa;
+  --green: #66bb6a;
+  --red: #ef5350;
+  --orange: #ffa726;
+  --purple: #ab47bc;
+  --radius: 8px;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* --- Layout --- */
+.app { max-width: 960px; margin: 0 auto; padding: 0 20px 40px; }
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+
+header h1 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+nav { display: flex; gap: 4px; }
+
+nav button {
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all .15s;
+}
+nav button:hover { color: var(--text); background: var(--surface); }
+nav button.active { color: var(--accent); background: var(--surface2); }
+
+.view { display: none; }
+.view.active { display: block; }
+
+/* --- Forms --- */
+.form-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+input, select, textarea {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  outline: none;
+  transition: border-color .15s;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+input::placeholder { color: var(--text-dim); }
+
+.input-grow { flex: 1; min-width: 200px; }
+
+/* --- Buttons --- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: var(--accent); color: #000; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-success { background: var(--green); color: #000; }
+.btn-success:hover:not(:disabled) { opacity: .85; }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-danger:hover:not(:disabled) { opacity: .85; }
+.btn-ghost {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+.btn-ghost:hover:not(:disabled) { color: var(--text); border-color: var(--text-dim); }
+.btn-sm { padding: 6px 12px; font-size: 13px; }
+
+/* --- Cards --- */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  position: relative;
+  transition: border-color .15s;
+}
+.card:hover { border-color: var(--text-dim); }
+
+.card-type-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin-bottom: 8px;
+}
+.badge-basic { background: var(--accent); color: #000; }
+.badge-detailed { background: var(--purple); color: #fff; }
+.badge-visual { background: var(--orange); color: #000; }
+.badge-cloze { background: var(--green); color: #000; }
+
+.card-status {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.status-GENERATED { color: var(--text-dim); }
+.status-ACCEPTED { color: var(--green); }
+.status-REJECTED { color: var(--red); }
+.status-DUPLICATE { color: var(--orange); }
+.status-EXPORTED { color: var(--purple); }
+
+.card-question {
+  font-size: 15px;
+  font-weight: 500;
+  margin-bottom: 8px;
+  color: #fff;
+}
+
+.card-answer {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+
+.card-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.card-image {
+  width: 100%;
+  max-height: 200px;
+  object-fit: cover;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.card-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* --- Stats --- */
+.stats-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.stat-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  min-width: 120px;
+  text-align: center;
+}
+.stat-box .stat-num {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.stat-box .stat-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+
+/* --- Toast --- */
+.toast-container {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toast {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 20px;
+  font-size: 14px;
+  min-width: 250px;
+  animation: slideIn .2s ease;
+  box-shadow: 0 4px 20px rgba(0,0,0,.4);
+}
+.toast.error { border-color: var(--red); color: var(--red); }
+.toast.success { border-color: var(--green); color: var(--green); }
+
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* --- Loading --- */
+.spinner {
+  display: inline-block;
+  width: 18px; height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.loading-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px;
+  color: var(--text-dim);
+}
+
+/* --- Modal --- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 90%;
+  max-width: 520px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.modal h3 {
+  margin-bottom: 16px;
+  color: var(--accent);
+}
+
+.modal label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  margin-top: 12px;
+}
+
+.modal input, .modal textarea {
+  width: 100%;
+}
+
+.modal textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+/* --- Filters --- */
+.filters {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.filters select { min-width: 140px; }
+
+/* --- Section header --- */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.section-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* --- Misc --- */
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-dim);
+}
+
+.cloze-highlight { color: var(--accent); font-weight: 600; }
+
+.bulk-bar {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.bulk-bar .bulk-count { font-size: 14px; color: var(--text-dim); margin-right: auto; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Anki Generator</h1>
+    <nav>
+      <button class="active" data-view="generate">Generate</button>
+      <button data-view="cards">Cards</button>
+      <button data-view="manage">Manage</button>
+    </nav>
+  </header>
+
+  <!-- ==================== GENERATE VIEW ==================== -->
+  <div id="view-generate" class="view active">
+    <div id="stats-row" class="stats-row"></div>
+
+    <div class="form-row">
+      <input id="gen-topic" class="input-grow" type="text" placeholder="Topic (e.g. Machine Learning, Organic Chemistry)">
+      <select id="gen-type">
+        <option value="basic">Basic (Q&A)</option>
+        <option value="detailed">Detailed</option>
+        <option value="visual">Visual</option>
+        <option value="cloze">Cloze</option>
+      </select>
+      <input id="gen-count" type="number" value="5" min="1" max="20" style="width:70px">
+      <button id="gen-btn" class="btn btn-primary" onclick="doGenerate()">Generate</button>
+    </div>
+
+    <div id="gen-results"></div>
+  </div>
+
+  <!-- ==================== CARDS VIEW ==================== -->
+  <div id="view-cards" class="view">
+    <div class="section-header">
+      <span class="section-title">All Cards</span>
+    </div>
+    <div class="filters">
+      <select id="filter-status" onchange="loadCards()">
+        <option value="">All Statuses</option>
+        <option value="GENERATED">Generated</option>
+        <option value="ACCEPTED">Accepted</option>
+        <option value="REJECTED">Rejected</option>
+        <option value="DUPLICATE">Duplicate</option>
+        <option value="EXPORTED">Exported</option>
+      </select>
+      <select id="filter-topic" onchange="loadCards()">
+        <option value="">All Topics</option>
+      </select>
+      <select id="filter-type" onchange="loadCards()">
+        <option value="">All Types</option>
+        <option value="basic">Basic</option>
+        <option value="detailed">Detailed</option>
+        <option value="visual">Visual</option>
+        <option value="cloze">Cloze</option>
+      </select>
+    </div>
+    <div id="bulk-bar" class="bulk-bar" style="display:none">
+      <span class="bulk-count"><span id="bulk-count-num">0</span> selected</span>
+      <button class="btn btn-sm btn-success" onclick="bulkAction('ACCEPTED')">Accept</button>
+      <button class="btn btn-sm btn-danger" onclick="bulkAction('REJECTED')">Reject</button>
+      <button class="btn btn-sm btn-ghost" onclick="clearSelection()">Clear</button>
+    </div>
+    <div id="cards-list" class="card-grid"></div>
+  </div>
+
+  <!-- ==================== MANAGE VIEW ==================== -->
+  <div id="view-manage" class="view">
+    <div class="section-header">
+      <span class="section-title">Export & Import</span>
+    </div>
+
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px">
+      <div class="stat-box" style="flex:1;text-align:left;min-width:280px">
+        <h3 style="font-size:15px;margin-bottom:12px;color:var(--accent)">Export to Anki</h3>
+        <div class="form-row">
+          <input id="export-deck" class="input-grow" type="text" value="Flashcards" placeholder="Deck name">
+          <button class="btn btn-primary" onclick="doExport()">Export .apkg</button>
+        </div>
+        <p style="font-size:12px;color:var(--text-dim);margin-top:8px">Exports all ACCEPTED cards and marks them as EXPORTED.</p>
+      </div>
+
+      <div class="stat-box" style="flex:1;text-align:left;min-width:280px">
+        <h3 style="font-size:15px;margin-bottom:12px;color:var(--accent)">Import Context</h3>
+        <div class="form-row">
+          <input id="import-file" type="file" accept=".apkg">
+          <button class="btn btn-primary" onclick="doImport()">Import</button>
+        </div>
+        <p style="font-size:12px;color:var(--text-dim);margin-top:8px">Import an .apkg deck for dedup context. New cards won't repeat concepts from imported decks.</p>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <span class="section-title">Cleanup</span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-ghost" onclick="doClear('GENERATED,REJECTED,DUPLICATE')">Clear Draft Cards</button>
+      <button class="btn btn-danger" onclick="if(confirm('Delete ALL cards including accepted and exported?'))doClear('GENERATED,REJECTED,DUPLICATE,ACCEPTED,EXPORTED,CONTEXT')">Clear Everything</button>
+    </div>
+    <div id="context-info" style="margin-top:16px;font-size:13px;color:var(--text-dim)"></div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toasts" class="toast-container"></div>
+
+<!-- Edit modal -->
+<div id="edit-modal" class="modal-backdrop" style="display:none">
+  <div class="modal">
+    <h3>Edit Card</h3>
+    <input type="hidden" id="edit-id">
+    <input type="hidden" id="edit-card-type">
+    <div id="edit-fields"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===================== State =====================
+let selectedIds = new Set();
+
+// ===================== API helpers =====================
+async function api(url, opts = {}) {
+  const res = await fetch(url, {
+    headers: { 'Content-Type': 'application/json', ...opts.headers },
+    ...opts,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || err.error || 'Request failed');
+  }
+  return res;
+}
+
+function toast(msg, type = '') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// ===================== Navigation =====================
+document.querySelectorAll('nav button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('view-' + btn.dataset.view).classList.add('active');
+
+    if (btn.dataset.view === 'cards') { loadTopics(); loadCards(); }
+    if (btn.dataset.view === 'manage') { loadContextInfo(); }
+    if (btn.dataset.view === 'generate') { loadStats(); }
+  });
+});
+
+// ===================== Stats =====================
+async function loadStats() {
+  try {
+    const data = await api('/api/counts').then(r => r.json());
+    const s = data.by_status || {};
+    document.getElementById('stats-row').innerHTML = `
+      <div class="stat-box"><div class="stat-num">${data.total || 0}</div><div class="stat-label">Total</div></div>
+      <div class="stat-box"><div class="stat-num">${s.GENERATED || 0}</div><div class="stat-label">Generated</div></div>
+      <div class="stat-box"><div class="stat-num">${s.ACCEPTED || 0}</div><div class="stat-label">Accepted</div></div>
+      <div class="stat-box"><div class="stat-num">${s.EXPORTED || 0}</div><div class="stat-label">Exported</div></div>
+    `;
+  } catch { /* ignore */ }
+}
+
+// ===================== Generate =====================
+async function doGenerate() {
+  const topic = document.getElementById('gen-topic').value.trim();
+  const card_type = document.getElementById('gen-type').value;
+  const count = parseInt(document.getElementById('gen-count').value) || 5;
+
+  if (!topic) { toast('Enter a topic', 'error'); return; }
+
+  const btn = document.getElementById('gen-btn');
+  const results = document.getElementById('gen-results');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Generating...';
+  results.innerHTML = '<div class="loading-overlay"><div class="spinner" style="width:32px;height:32px"></div>Generating ' + count + ' ' + card_type + ' cards...</div>';
+
+  try {
+    const data = await api('/api/generate', {
+      method: 'POST',
+      body: JSON.stringify({ topic, count, card_type }),
+    }).then(r => r.json());
+
+    const cards = data.cards || [];
+    if (!cards.length) {
+      results.innerHTML = '<div class="empty-state">No cards generated.</div>';
+      return;
+    }
+
+    results.innerHTML = `
+      <div class="section-header" style="margin-top:20px">
+        <span class="section-title">${cards.length} cards generated</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-sm btn-success" onclick="acceptAll()">Accept All</button>
+          <button class="btn btn-sm btn-danger" onclick="rejectAll()">Reject All</button>
+        </div>
+      </div>
+      <div class="card-grid" id="gen-cards"></div>
+    `;
+
+    const grid = document.getElementById('gen-cards');
+    cards.forEach(c => grid.appendChild(renderCard(c, true)));
+
+    loadStats();
+    toast(cards.length + ' cards generated', 'success');
+  } catch (e) {
+    results.innerHTML = '<div class="empty-state">' + escHtml(e.message) + '</div>';
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generate';
+  }
+}
+
+async function acceptAll() {
+  const cards = document.querySelectorAll('#gen-cards .card[data-status="GENERATED"]');
+  const ids = [...cards].map(c => parseInt(c.dataset.id));
+  if (!ids.length) return;
+  try {
+    await api('/api/cards/batch-status', {
+      method: 'PATCH',
+      body: JSON.stringify({ ids, status: 'ACCEPTED' }),
+    });
+    cards.forEach(c => {
+      c.dataset.status = 'ACCEPTED';
+      c.querySelector('.card-status').textContent = 'ACCEPTED';
+      c.querySelector('.card-status').className = 'card-status status-ACCEPTED';
+    });
+    loadStats();
+    toast(ids.length + ' cards accepted', 'success');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function rejectAll() {
+  const cards = document.querySelectorAll('#gen-cards .card[data-status="GENERATED"]');
+  const ids = [...cards].map(c => parseInt(c.dataset.id));
+  if (!ids.length) return;
+  try {
+    await api('/api/cards/batch-status', {
+      method: 'PATCH',
+      body: JSON.stringify({ ids, status: 'REJECTED' }),
+    });
+    cards.forEach(c => {
+      c.dataset.status = 'REJECTED';
+      c.querySelector('.card-status').textContent = 'REJECTED';
+      c.querySelector('.card-status').className = 'card-status status-REJECTED';
+    });
+    loadStats();
+    toast(ids.length + ' cards rejected');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// ===================== Card rendering =====================
+function renderCard(card, isGenView = false) {
+  const div = document.createElement('div');
+  div.className = 'card';
+  div.dataset.id = card.id;
+  div.dataset.status = card.status;
+  div.dataset.cardType = card.card_type;
+
+  const extra = card.extra_fields || {};
+  const type = card.card_type || 'basic';
+  const badgeClass = 'badge-' + type;
+  let imgHtml = '';
+  if (extra.image_filename) {
+    imgHtml = `<img class="card-image" src="/media/${escAttr(extra.image_filename)}" alt="card image" loading="lazy">`;
+  }
+
+  let bodyHtml = '';
+  if (type === 'visual') {
+    bodyHtml = `
+      ${imgHtml}
+      <div class="card-question">${escHtml(extra.title || card.question)}</div>
+      <div class="card-answer">${escHtml(extra.explanation || card.answer)}</div>
+    `;
+  } else if (type === 'cloze') {
+    const clozeText = extra.text || card.answer || '';
+    bodyHtml = `
+      <div class="card-question">${formatCloze(clozeText)}</div>
+      ${extra.extra ? '<div class="card-answer">Hint: ' + escHtml(extra.extra) + '</div>' : ''}
+    `;
+  } else if (type === 'detailed') {
+    bodyHtml = `
+      <div class="card-question">${escHtml(card.question)}</div>
+      <div class="card-answer"><strong>${escHtml(extra.summary || card.answer)}</strong></div>
+      ${extra.explanation ? '<div class="card-answer">' + escHtml(extra.explanation) + '</div>' : ''}
+      ${imgHtml}
+    `;
+  } else {
+    bodyHtml = `
+      <div class="card-question">${escHtml(card.question)}</div>
+      <div class="card-answer">${escHtml(card.answer)}</div>
+    `;
+  }
+
+  const showAcceptReject = card.status === 'GENERATED';
+
+  div.innerHTML = `
+    <span class="card-type-badge ${badgeClass}">${type}</span>
+    <span class="card-status status-${card.status}">${card.status}</span>
+    ${card.topic ? '<div class="card-meta">' + escHtml(card.topic) + '</div>' : ''}
+    ${bodyHtml}
+    <div class="card-actions">
+      ${showAcceptReject ? `
+        <button class="btn btn-sm btn-success" onclick="setStatus(${card.id}, 'ACCEPTED', this)">Accept</button>
+        <button class="btn btn-sm btn-danger" onclick="setStatus(${card.id}, 'REJECTED', this)">Reject</button>
+      ` : ''}
+      <button class="btn btn-sm btn-ghost" onclick="openEdit(${card.id})">Edit</button>
+      <button class="btn btn-sm btn-ghost" onclick="deleteCard(${card.id}, this)">Del</button>
+      ${!isGenView ? `<input type="checkbox" style="margin-left:auto;cursor:pointer" onchange="toggleSelect(${card.id}, this.checked)" ${selectedIds.has(card.id) ? 'checked' : ''}>` : ''}
+    </div>
+  `;
+  return div;
+}
+
+function formatCloze(text) {
+  return escHtml(text).replace(/\{\{c\d+::(.*?)\}\}/g, '<span class="cloze-highlight">[$1]</span>');
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function escAttr(s) {
+  return escHtml(s);
+}
+
+// ===================== Card actions =====================
+async function setStatus(id, status, btnEl) {
+  try {
+    const card = await api(`/api/cards/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }).then(r => r.json());
+
+    // Update the card element in-place
+    const cardEl = btnEl.closest('.card');
+    const newCard = renderCard(card, !!document.getElementById('gen-cards')?.contains(cardEl));
+    cardEl.replaceWith(newCard);
+    loadStats();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function deleteCard(id, btnEl) {
+  if (!confirm('Delete this card?')) return;
+  try {
+    await api(`/api/cards/${id}`, { method: 'DELETE' });
+    btnEl.closest('.card').remove();
+    selectedIds.delete(id);
+    updateBulkBar();
+    loadStats();
+    toast('Card deleted');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// ===================== Selection & bulk =====================
+function toggleSelect(id, checked) {
+  if (checked) selectedIds.add(id); else selectedIds.delete(id);
+  updateBulkBar();
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  document.querySelectorAll('#cards-list input[type=checkbox]').forEach(cb => cb.checked = false);
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById('bulk-bar');
+  if (selectedIds.size > 0) {
+    bar.style.display = 'flex';
+    document.getElementById('bulk-count-num').textContent = selectedIds.size;
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+async function bulkAction(status) {
+  const ids = [...selectedIds];
+  if (!ids.length) return;
+  try {
+    const data = await api('/api/cards/batch-status', {
+      method: 'PATCH',
+      body: JSON.stringify({ ids, status }),
+    }).then(r => r.json());
+    toast(data.updated + ' cards updated', 'success');
+    selectedIds.clear();
+    updateBulkBar();
+    loadCards();
+    loadStats();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// ===================== Cards list =====================
+async function loadCards() {
+  const list = document.getElementById('cards-list');
+  const status = document.getElementById('filter-status').value;
+  const topic = document.getElementById('filter-topic').value;
+  const type = document.getElementById('filter-type').value;
+
+  let url = '/api/cards?';
+  if (status) url += 'status=' + encodeURIComponent(status) + '&';
+  if (topic) url += 'topic=' + encodeURIComponent(topic) + '&';
+  if (type) url += 'card_type=' + encodeURIComponent(type) + '&';
+
+  try {
+    const data = await api(url).then(r => r.json());
+    const cards = (data.cards || []).filter(c => c.status !== 'CONTEXT');
+
+    if (!cards.length) {
+      list.innerHTML = '<div class="empty-state">No cards found.</div>';
+      return;
+    }
+
+    list.innerHTML = '';
+    cards.forEach(c => list.appendChild(renderCard(c)));
+  } catch (e) {
+    list.innerHTML = '<div class="empty-state">' + escHtml(e.message) + '</div>';
+  }
+}
+
+async function loadTopics() {
+  try {
+    const data = await api('/api/topics').then(r => r.json());
+    const sel = document.getElementById('filter-topic');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All Topics</option>';
+    (data.topics || []).forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t;
+      opt.textContent = t;
+      sel.appendChild(opt);
+    });
+    sel.value = current;
+  } catch { /* ignore */ }
+}
+
+// ===================== Edit modal =====================
+async function openEdit(id) {
+  try {
+    const card = await api(`/api/cards/${id}`).then(r => r.json());
+    document.getElementById('edit-id').value = id;
+    document.getElementById('edit-card-type').value = card.card_type;
+    const extra = card.extra_fields || {};
+
+    let fieldsHtml = `
+      <label>Question</label>
+      <input id="edit-question" value="${escAttr(card.question)}">
+    `;
+
+    if (card.card_type === 'detailed') {
+      fieldsHtml += `
+        <label>Summary</label>
+        <input id="edit-summary" value="${escAttr(extra.summary || card.answer)}">
+        <label>Explanation</label>
+        <textarea id="edit-explanation">${escHtml(extra.explanation || '')}</textarea>
+      `;
+    } else if (card.card_type === 'visual') {
+      fieldsHtml += `
+        <label>Title</label>
+        <input id="edit-title" value="${escAttr(extra.title || card.question)}">
+        <label>Explanation</label>
+        <textarea id="edit-explanation">${escHtml(extra.explanation || card.answer)}</textarea>
+      `;
+    } else if (card.card_type === 'cloze') {
+      fieldsHtml += `
+        <label>Cloze Text (use {{c1::term}} syntax)</label>
+        <textarea id="edit-cloze-text">${escHtml(extra.text || card.answer)}</textarea>
+        <label>Hint</label>
+        <input id="edit-extra" value="${escAttr(extra.extra || '')}">
+      `;
+    } else {
+      fieldsHtml += `
+        <label>Answer</label>
+        <textarea id="edit-answer">${escHtml(card.answer)}</textarea>
+      `;
+    }
+
+    document.getElementById('edit-fields').innerHTML = fieldsHtml;
+    document.getElementById('edit-modal').style.display = 'flex';
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function closeModal() {
+  document.getElementById('edit-modal').style.display = 'none';
+}
+
+async function saveEdit() {
+  const id = document.getElementById('edit-id').value;
+  const type = document.getElementById('edit-card-type').value;
+  const question = document.getElementById('edit-question').value;
+
+  let answer = '';
+  let extra_fields = null;
+
+  if (type === 'detailed') {
+    const summary = document.getElementById('edit-summary').value;
+    const explanation = document.getElementById('edit-explanation').value;
+    answer = summary;
+    extra_fields = { summary, explanation };
+  } else if (type === 'visual') {
+    const title = document.getElementById('edit-title').value;
+    const explanation = document.getElementById('edit-explanation').value;
+    answer = explanation;
+    extra_fields = { title, explanation };
+  } else if (type === 'cloze') {
+    const text = document.getElementById('edit-cloze-text').value;
+    const extra = document.getElementById('edit-extra').value;
+    answer = text;
+    extra_fields = { text, extra };
+  } else {
+    answer = document.getElementById('edit-answer').value;
+  }
+
+  try {
+    await api(`/api/cards/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ question, answer, extra_fields }),
+    });
+    closeModal();
+    toast('Card updated', 'success');
+
+    // Refresh whichever view is active
+    if (document.getElementById('view-cards').classList.contains('active')) loadCards();
+    if (document.getElementById('gen-cards')) {
+      const cardEl = document.querySelector(`#gen-cards .card[data-id="${id}"]`);
+      if (cardEl) {
+        const updated = await api(`/api/cards/${id}`).then(r => r.json());
+        cardEl.replaceWith(renderCard(updated, true));
+      }
+    }
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// Close modal on backdrop click
+document.getElementById('edit-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeModal();
+});
+
+// ===================== Export & Import =====================
+async function doExport() {
+  const deckName = document.getElementById('export-deck').value.trim() || 'Flashcards';
+  try {
+    const res = await fetch('/api/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deck_name: deckName }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Export failed');
+    }
+    const blob = await res.blob();
+    const filename = res.headers.get('content-disposition')?.match(/filename="?(.+)"?/)?.[1] || deckName + '.apkg';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast('Exported! Import the .apkg into Anki.', 'success');
+    loadStats();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function doImport() {
+  const fileInput = document.getElementById('import-file');
+  const file = fileInput.files[0];
+  if (!file) { toast('Select a file first', 'error'); return; }
+
+  const form = new FormData();
+  form.append('file', file);
+  form.append('clear_existing', 'true');
+
+  try {
+    const res = await fetch('/api/import?clear_existing=true', {
+      method: 'POST',
+      body: form,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Import failed');
+    }
+    const data = await res.json();
+    toast(`Imported ${data.count} cards from "${data.deck_name}"`, 'success');
+    loadContextInfo();
+    loadStats();
+    fileInput.value = '';
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function doClear(statuses) {
+  try {
+    const data = await api('/api/clear?status=' + encodeURIComponent(statuses), { method: 'DELETE' }).then(r => r.json());
+    toast(data.deleted + ' cards cleared', 'success');
+    loadStats();
+    loadContextInfo();
+    if (document.getElementById('view-cards').classList.contains('active')) loadCards();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function loadContextInfo() {
+  try {
+    const data = await api('/api/counts').then(r => r.json());
+    const ctx = (data.by_status || {}).CONTEXT || 0;
+    document.getElementById('context-info').textContent = ctx > 0
+      ? `${ctx} context cards loaded for dedup.`
+      : 'No context cards loaded.';
+  } catch { /* ignore */ }
+}
+
+// ===================== Init =====================
+loadStats();
+
+// Enter key triggers generate
+document.getElementById('gen-topic').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doGenerate();
+});
+</script>
+</body>
+</html>

@@ -9,7 +9,7 @@ env/
 setup.py
 
 # Data (runtime generated)
-data/
+/data/
 anki_vector_store/
 anki_matrix.pkl
 anki_notes.pkl
@@ -28,4 +28,12 @@ web/dist/
 # IDE
 .vscode/
 .idea/
-.DS_Store*.apkg
+.DS_Store
+*.apkg
+.claude/
+
+# Android build output
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties

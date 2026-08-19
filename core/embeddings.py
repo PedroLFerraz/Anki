@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 _gemini_client = None
 _ollama_client = None
+_embedding_warned = False
 
 
 def _get_gemini_client():
@@ -33,6 +34,7 @@ def _get_ollama_client():
 
 def get_embedding(text: str) -> np.ndarray | None:
     """Get embedding vector using the configured provider."""
+    global _embedding_warned
     if not text.strip():
         return None
 
@@ -54,7 +56,9 @@ def get_embedding(text: str) -> np.ndarray | None:
             )
             return np.array(result.data[0].embedding, dtype=np.float32)
     except Exception as e:
-        logger.warning("Embedding generation failed: %s", e)
+        if not _embedding_warned:
+            logger.warning("Embeddings unavailable — using fuzzy matching only: %s", e)
+            _embedding_warned = True
         return None
 
 
@@ -96,7 +100,10 @@ def is_duplicate(
     if new_embedding is not None:
         for i, emb in enumerate(existing_embeddings):
             if emb is not None:
-                sim = cosine_similarity(new_embedding, emb)
+                try:
+                    sim = cosine_similarity(new_embedding, emb)
+                except ValueError:
+                    continue  # dimension mismatch (e.g. switched embedding model)
                 if sim >= semantic_threshold:
                     eq = existing_cards[i].get("Question", "")
                     return True, f"Semantic match (sim={sim:.3f}): '{eq[:60]}'"

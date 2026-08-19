@@ -7,9 +7,9 @@ DATA_DIR = BASE_DIR / "data"
 EXPORTS_DIR = DATA_DIR / "exports"
 MEDIA_DIR = DATA_DIR / "media"
 
-DATA_DIR.mkdir(exist_ok=True)
-EXPORTS_DIR.mkdir(exist_ok=True)
-MEDIA_DIR.mkdir(exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class Settings(BaseSettings):
