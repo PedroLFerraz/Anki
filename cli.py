@@ -390,6 +390,59 @@ def cmd_clear_context(args):
         print("No context cards to clear.")
 
 
+def cmd_fix_media(args):
+    """Convert stray non-JPEG media to JPEG and repoint the cards at them.
+
+    Downloads have converted to JPEG for a while, but media saved before that
+    is still PNG or WebP, and Anki does not import those reliably.
+    """
+    import json
+
+    from PIL import Image
+
+    from core.config import MEDIA_DIR
+
+    stale = [
+        p for p in sorted(MEDIA_DIR.iterdir())
+        if p.is_file() and p.suffix.lower() not in (".jpg", ".jpeg")
+    ]
+    if not stale:
+        print("All media is already JPEG.")
+        return
+
+    print(f"Found {len(stale)} non-JPEG file(s).\n")
+    renames: dict[str, str] = {}
+    converted = 0
+
+    for path in stale:
+        target = path.with_suffix(".jpg")
+        try:
+            with Image.open(path) as img:
+                if img.mode in ("RGBA", "P", "LA", "L"):
+                    img = img.convert("RGB")
+                img.save(target, "JPEG")
+        except Exception as e:
+            print(f"  SKIP  {path.name}: {e}")
+            continue
+
+        renames[path.name] = target.name
+        path.unlink(missing_ok=True)
+        converted += 1
+        print(f"  {path.name}  ->  {target.name}")
+
+    # Repoint any card still referencing the old filename.
+    repointed = 0
+    for card in repository.get_cards():
+        extra = card.get("extra_fields") or {}
+        old = extra.get("image_filename")
+        if old and old in renames:
+            extra["image_filename"] = renames[old]
+            repository.update_card_extra_fields(card["id"], extra)
+            repointed += 1
+
+    print(f"\nConverted {converted} file(s), repointed {repointed} card(s).")
+
+
 def cmd_providers(args):
     """Show available providers and check the configured one actually answers."""
     from core.config import NATIVE_PROVIDERS, PROVIDERS, settings
@@ -481,6 +534,10 @@ def main():
     subparsers.add_parser("providers", aliases=["provider"],
                           help="Show LLM providers and test the configured one")
 
+    # fix-media
+    subparsers.add_parser("fix-media",
+                          help="Convert non-JPEG media to JPEG (Anki imports JPEG reliably)")
+
     args = parser.parse_args()
 
     if args.command in ("generate", "gen"):
@@ -497,6 +554,8 @@ def main():
         cmd_clear_context(args)
     elif args.command in ("providers", "provider"):
         cmd_providers(args)
+    elif args.command == "fix-media":
+        cmd_fix_media(args)
     else:
         parser.print_help()
 
