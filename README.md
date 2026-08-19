@@ -116,23 +116,60 @@ Copy `.env.example` to `.env` and edit as needed. All settings have defaults tha
 cp .env.example .env
 ```
 
-### Ollama (default — free, no rate limits)
+### Choosing a provider
+
+Every provider except Gemini speaks the OpenAI chat-completions protocol, so
+switching is two lines in `.env`:
 
 ```
-LLM_PROVIDER=ollama
-OLLAMA_BASE_URL=http://localhost:11434/v1
-OLLAMA_MODEL=phi4-mini
-OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+LLM_PROVIDER=groq
+LLM_API_KEY=your_key_here
 ```
 
-### Gemini (optional — requires API key)
+| Preset | Key from | Embeddings | Notes |
+|---|---|---|---|
+| `ollama` | — | Yes | Local, unlimited, offline. The default. |
+| `groq` | [console.groq.com](https://console.groq.com/keys) | No | Fast. |
+| `nvidia` | [build.nvidia.com](https://build.nvidia.com) | Yes | Only preset serving both chat and embeddings. |
+| `openrouter` | [openrouter.ai](https://openrouter.ai/keys) | No | Many free models, low per-model daily caps. |
+| `sambanova` | [cloud.sambanova.ai](https://cloud.sambanova.ai) | No | Daily token budget, not a request cap. |
+| `mistral` | [console.mistral.ai](https://console.mistral.ai) | Yes | Free tier is monthly credits. |
+| `gemini` | [aistudio.google.com](https://aistudio.google.com/apikey) | Yes | Uses google-genai, not the OpenAI protocol. |
+
+Free-tier limits move constantly — check the provider's own docs rather than
+trusting this table. [awesome-free-llm-apis](https://github.com/mnfst/awesome-free-llm-apis)
+tracks current numbers.
+
+Any other OpenAI-compatible endpoint works without a preset:
 
 ```
-LLM_PROVIDER=gemini
-GOOGLE_API_KEY=your_key_here
+LLM_PROVIDER=custom
+LLM_BASE_URL=https://your-endpoint/v1
+LLM_MODEL=some-model
+LLM_API_KEY=your_key_here
 ```
 
-Get a free Gemini API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey). The free tier supports ~20 requests/day on `gemini-2.5-flash-lite`.
+Models that reject `response_format` are detected on first use and fall back to
+extracting JSON from the reply text, so JSON-mode support is not a requirement.
+
+### Embeddings are configured separately
+
+Most free chat APIs serve no embedding endpoint, so `EMBEDDING_PROVIDER` is its
+own setting. Left empty it derives automatically: the chat provider if it
+supports embeddings, otherwise local Ollama.
+
+That makes the practical setup a hosted model for generation plus Ollama for
+embeddings — generation gets a decent model, dedup stays free and unlimited:
+
+```
+LLM_PROVIDER=groq
+LLM_API_KEY=your_key_here
+# EMBEDDING_PROVIDER left empty -> local Ollama
+```
+
+With no embeddings reachable at all, generation still works and dedup falls back
+to fuzzy text matching. That catches near-identical wording but not rephrasings,
+and the first failure logs a one-time warning.
 
 ## Duplicate Detection
 

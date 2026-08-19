@@ -10,7 +10,9 @@ from core.config import settings
 logger = logging.getLogger(__name__)
 
 _gemini_client = None
-_ollama_client = None
+# Keyed by (base_url, api_key); embeddings often come from a different provider
+# than generation, since most free chat APIs serve no embedding endpoint.
+_openai_clients: dict[tuple[str, str], object] = {}
 _embedding_warned = False
 
 
@@ -24,41 +26,52 @@ def _get_gemini_client():
     return _gemini_client
 
 
-def _get_ollama_client():
-    global _ollama_client
-    if _ollama_client is None:
+def _get_openai_client(base_url: str, api_key: str):
+    cache_key = (base_url, api_key)
+    if cache_key not in _openai_clients:
         from openai import OpenAI
-        _ollama_client = OpenAI(base_url=settings.ollama_base_url, api_key="ollama")
-    return _ollama_client
+        _openai_clients[cache_key] = OpenAI(base_url=base_url, api_key=api_key or "none")
+    return _openai_clients[cache_key]
+
+
+def _warn_once(reason: str):
+    """Dedup detection still works on fuzzy matching, so this is a warning."""
+    global _embedding_warned
+    if not _embedding_warned:
+        logger.warning("Embeddings unavailable — using fuzzy matching only: %s", reason)
+        _embedding_warned = True
 
 
 def get_embedding(text: str) -> np.ndarray | None:
-    """Get embedding vector using the configured provider."""
-    global _embedding_warned
+    """Get embedding vector using the configured embedding provider."""
     if not text.strip():
         return None
 
+    cfg = settings.resolve_embedding()
+    if not cfg["provider"]:
+        _warn_once("no embedding provider configured")
+        return None
+
     try:
-        if settings.llm_provider == "gemini":
+        if cfg["provider"] == "gemini":
             client = _get_gemini_client()
             if not client:
+                _warn_once("no GOOGLE_API_KEY configured")
                 return None
             result = client.models.embed_content(
-                model=settings.embedding_model,
+                model=cfg["model"],
                 contents=text,
             )
             return np.array(result.embeddings[0].values, dtype=np.float32)
         else:
-            client = _get_ollama_client()
+            client = _get_openai_client(cfg["base_url"], cfg["api_key"])
             result = client.embeddings.create(
-                model=settings.ollama_embedding_model,
+                model=cfg["model"],
                 input=text,
             )
             return np.array(result.data[0].embedding, dtype=np.float32)
     except Exception as e:
-        if not _embedding_warned:
-            logger.warning("Embeddings unavailable — using fuzzy matching only: %s", e)
-            _embedding_warned = True
+        _warn_once(str(e))
         return None
 
 

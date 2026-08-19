@@ -385,12 +385,147 @@ def test_embedding_failure_sets_warned_flag(monkeypatch):
     import core.embeddings as emb_mod
     monkeypatch.setattr(emb_mod, "_embedding_warned", False)
     monkeypatch.setattr("core.config.settings.llm_provider", "ollama")
+    monkeypatch.setattr("core.config.settings.embedding_provider", "")
     mock_client = MagicMock()
     mock_client.embeddings.create.side_effect = Exception("unavailable")
-    monkeypatch.setattr(emb_mod, "_get_ollama_client", lambda: mock_client)
+    monkeypatch.setattr(emb_mod, "_get_openai_client", lambda base_url, api_key: mock_client)
     result = emb_mod.get_embedding("test text")
     assert result is None
     assert emb_mod._embedding_warned is True
+
+
+def test_embedding_none_when_provider_has_no_embeddings(monkeypatch):
+    """Groq serves no embeddings, and no local Ollama fallback is configured."""
+    import core.embeddings as emb_mod
+    monkeypatch.setattr(emb_mod, "_embedding_warned", False)
+    monkeypatch.setattr("core.config.settings.embedding_provider", "groq")
+    assert emb_mod.get_embedding("some text") is None
+    assert emb_mod._embedding_warned is True
+
+
+# ============================================================
+# Provider configuration
+# ============================================================
+
+def test_resolve_llm_ollama_defaults(monkeypatch):
+    from core.config import settings as s
+    monkeypatch.setattr(s, "llm_provider", "ollama")
+    monkeypatch.setattr(s, "llm_base_url", "")
+    monkeypatch.setattr(s, "llm_model", "")
+    cfg = s.resolve_llm()
+    assert cfg["provider"] == "ollama"
+    assert cfg["base_url"] == s.ollama_base_url
+    assert cfg["model"] == s.ollama_model
+    assert cfg["needs_key"] is False
+
+
+def test_resolve_llm_uses_preset(monkeypatch):
+    from core.config import PROVIDERS, settings as s
+    monkeypatch.setattr(s, "llm_provider", "groq")
+    monkeypatch.setattr(s, "llm_base_url", "")
+    monkeypatch.setattr(s, "llm_model", "")
+    monkeypatch.setattr(s, "llm_api_key", "test-key")
+    cfg = s.resolve_llm()
+    assert cfg["base_url"] == PROVIDERS["groq"]["base_url"]
+    assert cfg["model"] == PROVIDERS["groq"]["model"]
+    assert cfg["api_key"] == "test-key"
+    assert cfg["needs_key"] is True
+
+
+def test_resolve_llm_overrides_win(monkeypatch):
+    from core.config import settings as s
+    monkeypatch.setattr(s, "llm_provider", "groq")
+    monkeypatch.setattr(s, "llm_base_url", "https://example.test/v1")
+    monkeypatch.setattr(s, "llm_model", "my-model")
+    cfg = s.resolve_llm()
+    assert cfg["base_url"] == "https://example.test/v1"
+    assert cfg["model"] == "my-model"
+
+
+def test_resolve_llm_unknown_provider_falls_back(monkeypatch):
+    from core.config import settings as s
+    monkeypatch.setattr(s, "llm_provider", "not-a-provider")
+    monkeypatch.setattr(s, "llm_base_url", "")
+    monkeypatch.setattr(s, "llm_model", "")
+    cfg = s.resolve_llm()
+    assert cfg["needs_key"] is False
+
+
+def test_resolve_embedding_falls_back_to_ollama(monkeypatch):
+    """Groq has no embedding endpoint, so embeddings should land on Ollama."""
+    from core.config import settings as s
+    monkeypatch.setattr(s, "llm_provider", "groq")
+    monkeypatch.setattr(s, "embedding_provider", "")
+    monkeypatch.setattr(s, "embedding_base_url", "")
+    monkeypatch.setattr(s, "embedding_model_name", "")
+    cfg = s.resolve_embedding()
+    assert cfg["provider"] == "ollama"
+    assert cfg["model"] == s.ollama_embedding_model
+
+
+def test_resolve_embedding_stays_on_provider_that_supports_it(monkeypatch):
+    from core.config import PROVIDERS, settings as s
+    monkeypatch.setattr(s, "llm_provider", "nvidia")
+    monkeypatch.setattr(s, "embedding_provider", "")
+    monkeypatch.setattr(s, "embedding_base_url", "")
+    monkeypatch.setattr(s, "embedding_model_name", "")
+    cfg = s.resolve_embedding()
+    assert cfg["provider"] == "nvidia"
+    assert cfg["model"] == PROVIDERS["nvidia"]["embedding_model"]
+
+
+def test_resolve_embedding_none_for_unsupported(monkeypatch):
+    from core.config import settings as s
+    monkeypatch.setattr(s, "embedding_provider", "groq")
+    assert s.resolve_embedding()["provider"] is None
+
+
+def test_check_llm_connection_missing_api_key(monkeypatch):
+    monkeypatch.setattr("core.config.settings.llm_provider", "groq")
+    monkeypatch.setattr("core.config.settings.llm_api_key", "")
+    result = agents.check_llm_connection()
+    assert result is not None
+    assert "No API key" in result
+
+
+def test_extract_json_plain():
+    assert agents._extract_json('{"a": 1}') == '{"a": 1}'
+
+
+def test_extract_json_fenced():
+    fenced = '```json\n{"a": 1}\n```'
+    assert agents._extract_json(fenced) == '{"a": 1}'
+
+
+def test_extract_json_with_prose():
+    text = 'Sure, here you go:\n{"cards": []}\nHope that helps!'
+    assert agents._extract_json(text) == '{"cards": []}'
+
+
+def test_chat_json_falls_back_when_json_mode_rejected(monkeypatch):
+    monkeypatch.setattr(agents, "_no_json_mode", set())
+    client = MagicMock()
+
+    def create(**kwargs):
+        if "response_format" in kwargs:
+            raise Exception("400: response_format is not supported by this model")
+        resp = MagicMock()
+        resp.choices = [MagicMock(message=MagicMock(content='```json\n{"ok": true}\n```'))]
+        return resp
+
+    client.chat.completions.create.side_effect = create
+    out = agents._chat_json(client, "some-model", "prompt")
+    assert json.loads(out) == {"ok": True}
+    # The model is remembered so JSON mode is not retried next time.
+    assert "some-model" in agents._no_json_mode
+
+
+def test_chat_json_reraises_unrelated_errors(monkeypatch):
+    monkeypatch.setattr(agents, "_no_json_mode", set())
+    client = MagicMock()
+    client.chat.completions.create.side_effect = Exception("401 invalid api key")
+    with pytest.raises(Exception, match="invalid api key"):
+        agents._chat_json(client, "some-model", "prompt")
 
 
 # ============================================================

@@ -10,7 +10,10 @@ from core.config import settings
 logger = logging.getLogger(__name__)
 
 _gemini_client = None
-_ollama_client = None
+# Keyed by (base_url, api_key) so switching providers mid-process is safe.
+_openai_clients: dict[tuple[str, str], object] = {}
+# Models observed to reject response_format; skip JSON mode for them thereafter.
+_no_json_mode: set[str] = set()
 
 
 def _get_gemini_client():
@@ -23,36 +26,96 @@ def _get_gemini_client():
     return _gemini_client
 
 
-def _get_ollama_client():
-    global _ollama_client
-    if _ollama_client is None:
+def _get_openai_client(base_url: str, api_key: str):
+    """Client for any provider speaking the OpenAI chat-completions protocol."""
+    cache_key = (base_url, api_key)
+    if cache_key not in _openai_clients:
         from openai import OpenAI
-        _ollama_client = OpenAI(base_url=settings.ollama_base_url, api_key="ollama")
-    return _ollama_client
+        # Local servers ignore the key, but the SDK requires a non-empty string.
+        _openai_clients[cache_key] = OpenAI(base_url=base_url, api_key=api_key or "none")
+    return _openai_clients[cache_key]
 
 
 def check_llm_connection() -> str | None:
     """Check if the LLM provider is reachable. Returns error message or None if OK."""
-    provider = settings.llm_provider
+    cfg = settings.resolve_llm()
+    provider = cfg["provider"]
+
+    if provider == "gemini":
+        if not _get_gemini_client():
+            return "No GOOGLE_API_KEY configured. Set it in .env file."
+        return None
+
+    if cfg["needs_key"] and not cfg["api_key"]:
+        return (
+            f"No API key for '{provider}'. Set LLM_API_KEY in .env — "
+            f"see .env.example for where to get a free one."
+        )
+
+    base = (cfg["base_url"] or "").rstrip("/")
     try:
-        if provider == "gemini":
-            client = _get_gemini_client()
-            if not client:
-                return "No GOOGLE_API_KEY configured. Set it in .env file."
-            return None
+        import requests
+        if provider == "ollama":
+            # Ollama's native endpoint sits alongside the OpenAI-compatible one.
+            root = base.removesuffix("/v1")
+            resp = requests.get(f"{root}/api/tags", timeout=5)
         else:
-            import requests
-            resp = requests.get(f"{settings.ollama_base_url.rstrip('/v1')}/api/tags", timeout=5)
-            resp.raise_for_status()
-            return None
+            headers = {"Authorization": f"Bearer {cfg['api_key']}"} if cfg["api_key"] else {}
+            resp = requests.get(f"{base}/models", headers=headers, timeout=10)
+        resp.raise_for_status()
+        return None
     except Exception as e:
-        url = settings.ollama_base_url if provider == "ollama" else "Gemini API"
-        return f"Cannot connect to {provider} at {url}: {e}"
+        return f"Cannot connect to {provider} at {base}: {e}"
+
+
+def _extract_json(text: str) -> str:
+    """Pull a JSON object out of a reply that may be fenced or wrapped in prose."""
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```(?:json)?\s*", "", t)
+        t = re.sub(r"\s*```$", "", t).strip()
+    if t.startswith("{"):
+        return t
+    start, end = t.find("{"), t.rfind("}")
+    if start != -1 and end > start:
+        return t[start:end + 1]
+    return t
+
+
+def _looks_like_json_mode_rejection(err: Exception) -> bool:
+    msg = str(err).lower()
+    return any(
+        token in msg
+        for token in ("response_format", "json_object", "json mode", "json_schema")
+    )
+
+
+def _chat_json(client, model: str, prompt: str) -> str:
+    """Request JSON, degrading to text extraction where JSON mode is unsupported."""
+    messages = [{"role": "user", "content": prompt}]
+
+    if model not in _no_json_mode:
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                response_format={"type": "json_object"},
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            if not _looks_like_json_mode_rejection(e):
+                raise
+            logger.info("%s rejects JSON mode; parsing JSON out of plain text.", model)
+            _no_json_mode.add(model)
+
+    response = client.chat.completions.create(model=model, messages=messages)
+    return _extract_json(response.choices[0].message.content or "")
 
 
 def _generate_json(prompt: str, max_retries: int = 3) -> dict:
     """Generate JSON content with automatic retry on rate limits and parse errors."""
-    provider = settings.llm_provider
+    cfg = settings.resolve_llm()
+    provider = cfg["provider"]
 
     for attempt in range(max_retries):
         try:
@@ -62,7 +125,7 @@ def _generate_json(prompt: str, max_retries: int = 3) -> dict:
                 if not client:
                     raise Exception("No GOOGLE_API_KEY configured")
                 response = client.models.generate_content(
-                    model=settings.gemini_model,
+                    model=cfg["model"],
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
@@ -70,13 +133,8 @@ def _generate_json(prompt: str, max_retries: int = 3) -> dict:
                 )
                 return json.loads(response.text)
             else:
-                client = _get_ollama_client()
-                response = client.chat.completions.create(
-                    model=settings.ollama_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"},
-                )
-                return json.loads(response.choices[0].message.content)
+                client = _get_openai_client(cfg["base_url"], cfg["api_key"])
+                return json.loads(_chat_json(client, cfg["model"], prompt))
         except json.JSONDecodeError as e:
             logger.warning("JSON parse failed (attempt %d/%d): %s", attempt + 1, max_retries, e)
             if attempt < max_retries - 1:
