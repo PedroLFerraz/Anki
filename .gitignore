@@ -6,6 +6,10 @@ venv/
 .venv/
 env/
 .env
+# Local env variants (backups, per-machine overrides) must never be committed,
+# but the checked-in template must stay tracked.
+.env.*
+!.env.example
 setup.py
 
 # Data (runtime generated)
