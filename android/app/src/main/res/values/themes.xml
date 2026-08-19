@@ -1,7 +1,11 @@
 <resources>
-    <style name="Theme.AnkiGen" parent="android:Theme.Material.NoActionBar">
-        <item name="android:statusBarColor">#0F0F1A</item>
-        <item name="android:navigationBarColor">#0F0F1A</item>
-        <item name="android:windowBackground">#0F0F1A</item>
+    <!-- Broadsheet is a paper system: light ground, dark status-bar icons.
+         enableEdgeToEdge in MainActivity owns the runtime bar styling; this
+         only needs to stop the window flashing dark before Compose draws. -->
+    <style name="Theme.AnkiGen" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#F3F2F2</item>
+        <item name="android:navigationBarColor">#F3F2F2</item>
+        <item name="android:windowBackground">#F3F2F2</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

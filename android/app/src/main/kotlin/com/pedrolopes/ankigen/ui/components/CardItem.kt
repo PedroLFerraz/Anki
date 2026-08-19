@@ -1,6 +1,7 @@
 package com.pedrolopes.ankigen.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,80 +11,71 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.pedrolopes.ankigen.data.model.CardType
 import com.pedrolopes.ankigen.data.model.backText
 import com.pedrolopes.ankigen.data.model.frontText
-import com.pedrolopes.ankigen.data.model.imageFilename
-import com.pedrolopes.ankigen.ui.theme.StatusGreen
-import com.pedrolopes.ankigen.ui.theme.StatusRed
-import com.pedrolopes.ankigen.ui.theme.cardTypeColor
+import com.pedrolopes.ankigen.ui.theme.AnswerStyle
+import com.pedrolopes.ankigen.ui.theme.Cyan
+import com.pedrolopes.ankigen.ui.theme.Ink
+import com.pedrolopes.ankigen.ui.theme.QuestionStyle
+import com.pedrolopes.ankigen.ui.theme.SourceSerif4
+import com.pedrolopes.ankigen.ui.theme.cardTypeAbbrev
+import com.pedrolopes.ankigen.ui.theme.ink
 import com.pedrolopes.ankigen.ui.theme.statusColor
 import com.pedrolopes.ankigen.data.model.Card as CardModel
 
+/**
+ * One row in the Cards list.
+ *
+ * Broadsheet sets these as running text rather than boxes: question, answer,
+ * and a three-letter type setting in the right margin. Selection is a cyan
+ * rule in the left gutter, not a checkbox.
+ */
 @Composable
 fun CardItem(
     card: CardModel,
     imageUrl: String?,
     modifier: Modifier = Modifier,
-    selected: Boolean? = null,
-    onSelectedChange: ((Boolean) -> Unit)? = null,
-    onAccept: (() -> Unit)? = null,
-    onReject: (() -> Unit)? = null,
-    onDelete: (() -> Unit)? = null,
+    selected: Boolean = false,
+    onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
+    showStatus: Boolean = false,
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
-        shape = RoundedCornerShape(12.dp),
+    Row(
+        modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
     ) {
-        Column(Modifier.padding(14.dp)) {
+        // Left gutter: carries the selection rule, and keeps text aligned
+        // whether or not anything is selected.
+        Box(
+            Modifier
+                .width(2.dp)
+                .height(if (selected) 44.dp else 0.dp)
+                .background(if (selected) Cyan else Color.Transparent),
+        )
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Badge(CardType.label(card.cardType), cardTypeColor(card.cardType))
-                Spacer(Modifier.size(8.dp))
-                card.topic?.takeIf { it.isNotBlank() }?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                Text(
-                    card.status,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = statusColor(card.status),
-                )
-            }
-
-            Spacer(Modifier.height(10.dp))
-
+        Column(Modifier.weight(1f)) {
             if (imageUrl != null) {
                 AsyncImage(
                     model = imageUrl,
@@ -91,75 +83,53 @@ fun CardItem(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(150.dp)
-                        .clip(RoundedCornerShape(8.dp)),
+                        .height(120.dp)
+                        .clip(RoundedCornerShape(2.dp)),
                 )
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(6.dp))
             }
 
             Text(
                 card.frontText,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                card.backText,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 6,
+                style = QuestionStyle,
+                color = Ink,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
-
-            val hasActions = onAccept != null || onReject != null ||
-                onDelete != null || onSelectedChange != null
-            if (hasActions) {
-                Spacer(Modifier.height(6.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    onAccept?.let {
-                        IconButton(onClick = it) {
-                            Icon(Icons.Default.Check, "Accept", tint = StatusGreen)
-                        }
-                    }
-                    onReject?.let {
-                        IconButton(onClick = it) {
-                            Icon(Icons.Default.Close, "Reject", tint = StatusRed)
-                        }
-                    }
-                    onDelete?.let {
-                        IconButton(onClick = it) {
-                            Icon(
-                                Icons.Default.Delete,
-                                "Delete",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    Spacer(Modifier.weight(1f))
-                    if (selected != null && onSelectedChange != null) {
-                        Checkbox(checked = selected, onCheckedChange = onSelectedChange)
-                    }
-                }
+            if (card.backText.isNotBlank()) {
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    card.backText,
+                    style = AnswerStyle,
+                    color = ink(0.62f),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (showStatus) {
+                Spacer(Modifier.height(3.dp))
+                Kicker(card.status, color = statusColor(card.status))
             }
         }
-    }
-}
 
-@Composable
-private fun Badge(text: String, color: androidx.compose.ui.graphics.Color) {
-    Box(
-        Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(color)
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-    ) {
-        Text(
-            text.uppercase(),
-            style = MaterialTheme.typography.labelSmall,
-            color = androidx.compose.ui.graphics.Color.Black,
-        )
+        Row(
+            Modifier.padding(top = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (selected) {
+                Icon(Icons.Default.Check, "Selected", tint = Cyan, modifier = Modifier.size(14.dp))
+            }
+            Text(
+                cardTypeAbbrev(card.cardType),
+                style = TextStyle(
+                    fontFamily = SourceSerif4,
+                    fontWeight = FontWeight.Normal,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.1.sp,
+                ),
+                color = ink(0.5f),
+            )
+        }
     }
 }

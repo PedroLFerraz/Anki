@@ -1,86 +1,93 @@
 package com.pedrolopes.ankigen.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Typography
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.sp
 
-// Carried over from the web frontend so both surfaces read as one product.
-val Accent = Color(0xFF4FC3F7)
-val AccentDim = Color(0xFF2E7A9E)
-val Surface1 = Color(0xFF1A1A2E)
-val Surface2 = Color(0xFF222240)
-val BackgroundDark = Color(0xFF0F0F1A)
-val BorderDark = Color(0xFF2D2D50)
-val TextDim = Color(0xFF8888AA)
+/**
+ * Broadsheet — the design system from the AnkiGen Redesign canvas.
+ *
+ * Paper ground, one ink, cyan as the only interactive colour and magenta
+ * reserved for rejects. Values are lifted verbatim from the system's
+ * styles.css so the app and the canvas stay in register.
+ */
 
-val StatusGreen = Color(0xFF66BB6A)
-val StatusRed = Color(0xFFEF5350)
-val StatusOrange = Color(0xFFFFA726)
-val StatusPurple = Color(0xFFAB47BC)
+// --- ground and ink ---
+val Paper = Color(0xFFF3F2F2)          // --color-bg
+val PaperSurface = Color(0xFFEAE9E9)   // --color-surface
+val Ink = Color(0xFF201E1D)            // --color-text
 
-private val DarkColors = darkColorScheme(
-    primary = Accent,
-    onPrimary = Color.Black,
-    primaryContainer = AccentDim,
-    onPrimaryContainer = Color.White,
-    secondary = StatusPurple,
-    background = BackgroundDark,
-    onBackground = Color(0xFFE0E0E0),
-    surface = Surface1,
-    onSurface = Color(0xFFE0E0E0),
-    surfaceVariant = Surface2,
-    onSurfaceVariant = TextDim,
-    outline = BorderDark,
-    error = StatusRed,
-)
+// --- cyan: the only interactive ink ---
+val Cyan = Color(0xFF0088B0)           // --color-accent
+val Cyan600 = Color(0xFF1186AC)
+val Cyan700 = Color(0xFF006786)        // --color-accent-700
+val Cyan100 = Color(0xFFE9F8FF)
 
-private val LightColors = lightColorScheme(
-    primary = AccentDim,
-    onPrimary = Color.White,
-    secondary = StatusPurple,
-    error = StatusRed,
-)
+// --- magenta: rejects and duplicates only, never chrome ---
+val Magenta = Color(0xFFD6006C)        // --color-accent-2
+val Magenta700 = Color(0xFFAA0B56)     // --color-accent-2-700
+val Magenta100 = Color(0xFFFFF1F4)
 
-private val AppTypography = Typography(
-    titleLarge = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.SemiBold),
-    titleMedium = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium),
-    bodyLarge = TextStyle(fontSize = 15.sp, lineHeight = 22.sp),
-    bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 20.sp),
-    labelSmall = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+/** `color-mix(in srgb, var(--color-text) N%, transparent)` from the stylesheet. */
+fun ink(fraction: Float): Color = Ink.copy(alpha = fraction)
+
+val Divider = ink(0.16f)               // --color-divider
+
+// The stylesheet's spacing scale, in dp.
+object Space {
+    const val S1 = 5
+    const val S2 = 10
+    const val S3 = 15
+    const val S4 = 20
+    const val S6 = 30
+    const val S8 = 40
+}
+
+private val BroadsheetColors = lightColorScheme(
+    primary = Cyan,
+    onPrimary = Paper,
+    primaryContainer = Cyan100,
+    onPrimaryContainer = Cyan700,
+    secondary = Magenta,
+    onSecondary = Paper,
+    secondaryContainer = Magenta100,
+    onSecondaryContainer = Magenta700,
+    background = Paper,
+    onBackground = Ink,
+    surface = Paper,
+    onSurface = Ink,
+    surfaceVariant = PaperSurface,
+    onSurfaceVariant = ink(0.62f),
+    outline = Divider,
+    outlineVariant = Divider,
+    error = Magenta,
+    onError = Paper,
 )
 
 @Composable
-fun AnkiGenTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    content: @Composable () -> Unit,
-) {
+fun AnkiGenTheme(content: @Composable () -> Unit) {
+    // Broadsheet is a paper system; it does not have a dark counterpart, so
+    // the scheme is committed rather than following the system setting.
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
-        typography = AppTypography,
+        colorScheme = BroadsheetColors,
+        typography = BroadsheetTypography,
         content = content,
     )
 }
 
-/** Accent colour for a card status chip. */
+/** Rule colour for a card status: cyan keeps, magenta drops, ink for the rest. */
 fun statusColor(status: String): Color = when (status) {
-    "ACCEPTED" -> StatusGreen
-    "REJECTED" -> StatusRed
-    "DUPLICATE" -> StatusOrange
-    "EXPORTED" -> StatusPurple
-    else -> TextDim
+    "ACCEPTED" -> Cyan
+    "REJECTED", "DUPLICATE" -> Magenta
+    "EXPORTED" -> Cyan700
+    else -> ink(0.45f)
 }
 
-/** Accent colour for a card-type badge. */
-fun cardTypeColor(cardType: String): Color = when (cardType) {
-    "detailed" -> StatusPurple
-    "visual" -> StatusOrange
-    "cloze" -> StatusGreen
-    else -> Accent
+/** Three-letter setting used in the canvas's card lists ("Bas", "Det", "Clz"). */
+fun cardTypeAbbrev(cardType: String): String = when (cardType) {
+    "detailed" -> "Det"
+    "visual" -> "Vis"
+    "cloze" -> "Clz"
+    else -> "Bas"
 }
