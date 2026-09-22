@@ -1,0 +1,2 @@
+Respond with JSON only, in exactly this shape:
+{"cards": [{"question": "...", "answer": "..."}]}

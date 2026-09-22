@@ -1,0 +1,89 @@
+# AnkiGen prompt profile.
+# `ankigen decks` lists your decks; `ankigen validate` checks this file against
+# them; `ankigen plan` shows what a run would generate and the exact prompts.
+
+learner:
+  level: "working data scientist, moving into data platform / data engineering"
+  language: English
+  goals:
+    # Quote anything containing ": " - unquoted, YAML reads it as a mapping.
+    - "Interview-ready on core data science: statistics, SQL, ML fundamentals"
+    - "Build real data platform skills: orchestration, containers, cloud storage"
+    - "Understand the why behind tools, not just the commands"
+
+style:
+  max_answer_words: 40
+  examples_per_prompt: 4
+  rules:
+    - Prefer questions a practitioner would actually be asked on the job or in an interview.
+    - When a concept has a common misconception, write the card to target it.
+    - For tooling, test behaviour and trade-offs, not version-specific trivia.
+
+# Cards you keep failing get a fresh angle (an example, a contrast) instead of a rephrase.
+weak_cards:
+  enabled: true
+  min_lapses: 2
+  max_ease: 2100
+  max_per_deck: 1
+
+global_quota: 15
+verify: true
+
+decks:
+  # --- existing decks: extend them in your own voice ---
+  - deck: DS::SQL
+    daily_quota: 3
+    card_type: basic
+    topics:
+      - window functions and frame clauses
+      - NULL semantics in joins, aggregates and comparisons
+      - query performance, indexes and execution plans
+      - CTEs versus subqueries versus temp tables
+    instructions: >
+      Use small concrete SQL snippets in backticks where they make the concept
+      clearer. Assume a PostgreSQL-flavoured dialect unless the concept is portable.
+
+  - deck: DS::Statistics
+    daily_quota: 2
+    card_type: basic
+    topics:
+      - hypothesis testing pitfalls and p-value interpretation
+      - bias-variance and regularisation
+      - A/B test design and power
+
+  # --- new subjects for the data platform move ---
+  - deck: Data Platform::Airflow
+    new_deck: true
+    daily_quota: 3
+    card_type: basic
+    topics:
+      - DAG scheduling, logical dates and catchup
+      - idempotent tasks and safe backfills
+      - executors and how tasks actually run
+      - XCom, and why not to pass data through it
+      - sensors, deferrable operators and retries
+
+  - deck: Data Platform::Docker
+    new_deck: true
+    daily_quota: 2
+    card_type: basic
+    topics:
+      - images, layers and build cache
+      - multi-stage builds and image size
+      - volumes, bind mounts and container state
+
+  - deck: Data Platform::Kubernetes
+    new_deck: true
+    daily_quota: 2
+    card_type: basic
+    topics:
+      - pods, deployments and jobs versus cronjobs
+      - configmaps, secrets and resource requests/limits
+
+  - deck: Data Platform::AWS
+    new_deck: true
+    daily_quota: 2
+    card_type: cloze
+    topics:
+      - S3 storage classes, lifecycle rules and data lake layout
+      - IAM least privilege, roles versus users

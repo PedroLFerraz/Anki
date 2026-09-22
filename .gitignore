@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+*.egg-info/
 *.py[cod]
 *$py.class
 venv/
@@ -41,3 +42,7 @@ android/build/
 android/app/build/
 android/.gradle/
 android/local.properties
+
+# Python build output
+/build/
+/dist/
