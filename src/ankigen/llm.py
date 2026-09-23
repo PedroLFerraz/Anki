@@ -29,10 +29,23 @@ class TransientProviderError(RuntimeError):
 _RETRYABLE = ("429", "rate limit", "overload", "temporarily", "timeout",
               "502", "503", "504", "resource_exhausted")
 
+# A *daily* cap, as opposed to a per-minute one. Both arrive as 429s and both
+# carry a "retry in 47s" hint, but waiting out a daily quota inside one run is
+# hopeless: it cost a CI job 23 minutes of sleeping before the job timed out.
+_DAILY_QUOTA = re.compile(r"per[-_ ]?day", re.IGNORECASE)
+
+
+class QuotaExhausted(RuntimeError):
+    """The provider's allowance for the day is gone. Nothing to wait for."""
+
 
 def _is_retryable(message: str) -> bool:
     msg = message.lower()
     return any(token in msg for token in _RETRYABLE)
+
+
+def _is_daily_quota(message: str) -> bool:
+    return bool(_DAILY_QUOTA.search(message))
 
 
 def _provider_error(response) -> str | None:
@@ -219,12 +232,14 @@ def call_json(prompt: str, max_retries: int = 5, cfg: dict | None = None) -> LLM
                 raise
         except Exception as e:
             msg = str(e)
+            if _is_daily_quota(msg):
+                raise QuotaExhausted(msg) from e
             if _is_retryable(msg) and attempt < max_retries - 1:
                 match = re.search(r"(?:retryDelay|try again in)\D*?(\d+(?:\.\d+)?)s", msg)
                 # The provider's own hint wins; otherwise back off exponentially
                 # rather than linearly, since an overloaded model stays that way
                 # for longer than the 5s and 10s a linear ramp waited.
-                wait = float(match.group(1)) + 2 if match else min(60, 5 * 2 ** attempt)
+                wait = min(90.0, float(match.group(1)) + 2) if match else min(60, 5 * 2 ** attempt)
                 logger.info("Provider busy (%s); waiting %.0fs (attempt %d/%d)",
                             msg[:70], wait, attempt + 1, max_retries)
                 time.sleep(wait)

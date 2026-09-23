@@ -303,3 +303,49 @@ def test_preflight_catches_a_missing_key(monkeypatch):
 
 def test_preflight_passes_for_a_working_config():
     llm.preflight()          # the conftest default: openrouter with a key
+
+
+# ---------------------------------------------------------------- daily quota
+
+GEMINI_DAILY_429 = (
+    "429 RESOURCE_EXHAUSTED. Quota exceeded for metric: "
+    "generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20. "
+    "quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier. Please retry in 47.6s."
+)
+
+
+def test_a_daily_cap_is_told_apart_from_a_per_minute_one():
+    assert llm._is_daily_quota(GEMINI_DAILY_429)
+    assert llm._is_daily_quota("Rate limit exceeded: free-models-per-day")
+    assert not llm._is_daily_quota("429 Rate limit reached. Please try again in 7.5s.")
+    assert not llm._is_daily_quota("503 Service temporarily overloaded")
+
+
+def test_daily_quota_is_not_retried(monkeypatch):
+    """It carries a "retry in 47s" hint like any 429, but the cap does not lift
+    until tomorrow — obeying the hint cost a CI job 23 minutes of sleeping."""
+    waits = []
+    monkeypatch.setattr(llm.time, "sleep", waits.append)
+    monkeypatch.setattr(llm, "_get_openai_client", lambda *a: None)
+
+    def chat(client, model, prompt):
+        raise Exception(GEMINI_DAILY_429)
+
+    monkeypatch.setattr(llm, "_chat_json", chat)
+    with pytest.raises(llm.QuotaExhausted):
+        llm.call_json("p")
+    assert waits == []                       # not a single second spent waiting
+
+
+def test_quota_exhaustion_stops_the_remaining_requests(wh, monkeypatch):
+    calls = []
+
+    def call(prompt, max_retries=5, cfg=None):
+        calls.append(prompt)
+        raise llm.QuotaExhausted(GEMINI_DAILY_429)
+
+    monkeypatch.setattr(llm, "call_json", call)
+    reqs = [_request(rid=f"r{i}") for i in range(7)]
+    with pytest.raises(generate.GenerationFailed):
+        generate.run(wh, RUN_DATE, reqs)
+    assert len(calls) == 1                   # asked once, then gave up on the rest

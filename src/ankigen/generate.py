@@ -137,9 +137,20 @@ def card_uid(run_date: date, request_id: str, front: str) -> str:
 def run(wh, run_date: date, requests: list[dict]) -> dict:
     rows, failures = [], []
     total_prompt = total_completion = 0
-    for req in requests:
+    for i, req in enumerate(requests):
         try:
             cards, result, p_tok, c_tok = generate_for_request(req)
+        except llm.QuotaExhausted as e:
+            # The day's allowance is gone, so the remaining requests would each
+            # fail the same way after the same backoff. Asking anyway once cost
+            # a CI job twenty minutes of sleeping.
+            logger.error("Daily quota exhausted at request %d of %d: %s",
+                         i + 1, len(requests), e)
+            failures.extend(
+                {"request_id": r["request_id"], "deck": r["deck"], "error": str(e)}
+                for r in requests[i:]
+            )
+            break
         except Exception as e:  # one bad request must not sink the whole run
             logger.error("Request %s (%s) failed: %s", req["request_id"], req["deck"], e)
             failures.append({"request_id": req["request_id"], "deck": req["deck"], "error": str(e)})

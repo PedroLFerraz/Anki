@@ -82,13 +82,24 @@ def run(wh, run_date: date, profile: Profile) -> dict:
         batches: dict[str, list[dict]] = {}
         for c in cards:
             batches.setdefault(c["request_id"], []).append(c)
+        exhausted = False
         for batch in batches.values():
             try:
+                if exhausted:
+                    raise llm.QuotaExhausted("daily quota already exhausted this run")
                 result = llm.call_json(
                     build_prompt(batch[0]["deck"], profile.learner.level, batch),
                     cfg=checker,
                 )
                 verdicts = judge(result.data.get("results", []), batch)
+            except llm.QuotaExhausted as e:
+                # Cards pass through unverified rather than being dropped, but
+                # the later batches do not queue up behind a cap that will not
+                # lift until tomorrow.
+                exhausted = True
+                logger.warning("Checker quota exhausted; %d card(s) unverified: %s", len(batch), e)
+                checker_errors += 1
+                verdicts = [(True, None, f"{UNVERIFIED}: {e}")] * len(batch)
             except Exception as e:
                 logger.warning("Verification failed for %d card(s): %s", len(batch), e)
                 checker_errors += 1
