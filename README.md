@@ -96,10 +96,26 @@ Every generation prompt is built from:
 ## LLM providers
 
 Any OpenAI-compatible endpoint works. Set `LLM_PROVIDER` to a preset (`groq`,
-`nvidia`, `openrouter`, `sambanova`, `mistral`, `ollama`) or to `gemini`.
-**Groq is the recommended free option.** It has no embeddings endpoint, so dedup
-embeddings fall back to local Ollama (`ollama pull nomic-embed-text`) on their
-own. If no embedding provider is reachable, dedup uses fuzzy matching only.
+`openrouter`, `nvidia`, `sambanova`, `mistral`, `ollama`) or to `gemini`.
+Two setups are worth knowing:
+
+| | Generation | Embeddings | Free limits |
+|---|---|---|---|
+| **Simplest** | `openrouter` | `openrouter` (same key) | ~50 requests/day, 1000 once you have bought $10 of credit |
+| **Highest limits** | `groq` | local `ollama` | 1000 requests/day; embeddings unlimited and offline |
+
+```
+LLM_PROVIDER=openrouter      # one key does chat and embeddings
+LLM_API_KEY=sk-or-...
+```
+
+Groq has no embeddings endpoint, so with `groq` the embedding step falls back to
+local Ollama on its own (`ollama pull nomic-embed-text`). OpenRouter does have
+one, and a free model, which is why it needs nothing local — useful once the
+pipeline runs in a container. A run costs about 14 requests, so either free tier
+covers a day comfortably. If no embedding provider is reachable at all, dedup
+degrades to fuzzy matching and says so in the report.
+
 `ankigen providers` shows the resolved configuration and tests the connection.
 
 ## Development
