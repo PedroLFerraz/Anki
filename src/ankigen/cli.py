@@ -216,6 +216,75 @@ def sync_collection(
     typer.echo(f"\nCommit it:\n  git add {dest} && git commit -m \"collection: refresh\" && git push")
 
 
+@app.command("push")
+def push(
+    run_date: Optional[str] = DateOpt,
+    login: bool = typer.Option(
+        False, "--login", help="Trade your AnkiWeb password for a key to store instead."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Say what would be pushed, touch nothing."
+    ),
+    no_media: bool = typer.Option(False, "--no-media", help="Skip syncing images."),
+):
+    """Push a run's cards into your Anki collection, over AnkiWeb.
+
+    Your devices then sync as usual and the cards are there, with no package
+    to import. The order is always: sync down, add, sync up — so this copy is
+    never behind yours. If AnkiWeb asks for a one-way sync it stops and says
+    so, because resolving that means choosing which side wins and it is not
+    this program's place to discard your review history.
+    """
+    from ankigen import push as pusher
+
+    if login:
+        auth = pusher._auth()
+        typer.echo("\nLogged in. Put this in .env and remove the password:\n")
+        typer.echo(f"  ANKIWEB_KEY={auth.hkey}")
+        return
+
+    d = _date(run_date)
+    ctx = pipeline.open_context()
+    try:
+        cards = ctx.wh.query(
+            "SELECT * FROM card_outcomes WHERE run_date = ? AND outcome = 'kept' "
+            "ORDER BY deck, card_uid",
+            [d],
+        )
+        deck_for = ctx.profile.deck_for
+    finally:
+        ctx.wh.close()
+
+    if not cards:
+        typer.echo(f"Nothing kept for {d}; nothing to push.")
+        return
+
+    for card in cards:
+        card["tags"] = ["ankigen", f"ankigen::run_{d}", f"ankigen::{card['request_reason']}"]
+        if (card.get("dup_reason") or "").startswith("near-dup"):
+            card["tags"].append("ankigen::near-dup")
+
+    if dry_run:
+        typer.echo(f"\nWould push {len(cards)} card(s) from {d}:")
+        for card in cards:
+            deck = deck_for(card["deck"])
+            img = " [+image]" if card.get("image_filename") else ""
+            typer.echo(f"  {deck:<34}{img:<9} {card['front'][:56]}")
+        typer.echo("\nRe-run without --dry-run to sync them to AnkiWeb.")
+        return
+
+    auth = pusher._auth()
+    col = pusher.open_collection(auth)
+    try:
+        typer.echo(f"  down: {pusher.sync(col, auth, media=not no_media)}")
+        result = pusher.push_cards(col, cards, Path(settings.data_dir) / "media", deck_for)
+        typer.echo(f"  push: {result}")
+        typer.echo(f"  up:   {pusher.sync(col, auth, media=not no_media)}")
+    finally:
+        col.close()
+    typer.echo("\nSync Anki on your devices to pull them down.")
+
+
 @app.command()
 def reset(
     yes: bool = typer.Option(False, "--yes", help="Actually do it."),

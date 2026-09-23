@@ -178,6 +178,15 @@ class Settings(BaseSettings):
     ollama_model: str = "phi4-mini"
     ollama_embedding_model: str = "nomic-embed-text"
 
+    # AnkiWeb, for pushing cards straight into the collection instead of
+    # exporting a package to import by hand. A key is preferred to a password:
+    # `ankigen push --login` trades one for the other, and changing your
+    # AnkiWeb password invalidates it.
+    ankiweb_username: str = ""
+    ankiweb_password: str = ""
+    ankiweb_key: str = ""
+    ankiweb_endpoint: str = ""      # a self-hosted sync server, if you run one
+
     # Guard against accidentally billing an OpenRouter key.
     allow_paid_models: bool = False
 
