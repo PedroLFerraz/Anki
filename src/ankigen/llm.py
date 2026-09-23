@@ -67,7 +67,14 @@ def _get_gemini_client():
     if not settings.google_api_key:
         return None
     if _gemini_client is None:
-        from google import genai
+        try:
+            from google import genai
+        except ImportError as e:      # pragma: no cover - env-specific
+            raise RuntimeError(
+                "LLM_PROVIDER=gemini needs the google-genai package, which is an "
+                "optional dependency: pip install 'ankigen[gemini]' (or "
+                "pip install google-genai)."
+            ) from e
         _gemini_client = genai.Client(api_key=settings.google_api_key)
     return _gemini_client
 
@@ -153,6 +160,26 @@ def _chat_json(client, model: str, prompt: str) -> tuple[str, int, int]:
     if (problem := _provider_error(response)):
         raise TransientProviderError(problem)
     return (extract_json(response.choices[0].message.content or ""), *_usage(response))
+
+
+def preflight() -> None:
+    """Check the configured providers could work, before any work is done.
+
+    Makes no network call, so it costs nothing against a metered free tier. It
+    exists because a missing optional dependency was only discovered after
+    ingest and targeting had run, and then reported once per request.
+    """
+    for label, cfg in (("LLM_PROVIDER", settings.resolve_llm()),
+                       ("the card checker (VERIFY_PROVIDER)", settings.resolve_verify())):
+        provider, model = cfg["provider"], cfg["model"]
+        if not model:
+            raise RuntimeError(f"{label} is {provider} but no model is configured.")
+        if provider == "gemini":
+            if not settings.google_api_key:
+                raise RuntimeError(f"{label} is gemini but GOOGLE_API_KEY is empty.")
+            _get_gemini_client()                  # raises if google-genai is missing
+        elif cfg.get("needs_key") and not cfg.get("api_key"):
+            raise RuntimeError(f"{label} is {provider} but LLM_API_KEY is empty.")
 
 
 def call_json(prompt: str, max_retries: int = 5, cfg: dict | None = None) -> LLMResult:
