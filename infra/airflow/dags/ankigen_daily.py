@@ -25,7 +25,10 @@ STAGES = ["ingest", "target", "generate", "verify", "dedup", "images", "export",
 @dag(
     dag_id="ankigen_daily",
     schedule="0 6 * * *",
-    start_date=pendulum.datetime(2026, 9, 1, tz="UTC"),
+    # Airflow reads the cron in the DAG's own timezone, so this is 6am where the
+    # cards are reviewed, not 3am. It also fixes the logical date: a run started
+    # at 6am UTC would be filed under the previous day locally.
+    start_date=pendulum.datetime(2026, 9, 1, tz="America/Sao_Paulo"),
     catchup=False,              # set True (or use `airflow dags backfill`) to fill history
     max_active_runs=1,          # DuckDB takes one writer at a time
     default_args={
