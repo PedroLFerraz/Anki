@@ -104,8 +104,8 @@ def stage_images(ctx: Context, run_date: date) -> dict:
 
     ctx.wh.replace_partition(
         "card_images", run_date,
-        ("run_date", "card_uid", "query", "filename", "source", "detail"),
-        [(run_date, r.card_uid, r.query, r.filename, r.source, r.detail) for r in results],
+        ("run_date", "card_uid", "query", "filename", "source", "url", "detail"),
+        [(run_date, r.card_uid, r.query, r.filename, r.source, r.url, r.detail) for r in results],
     )
     found = [r for r in results if r.found]
     return {

@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS card_images (
     query     VARCHAR,
     filename  VARCHAR,
     source    VARCHAR,
+    url       VARCHAR,
     detail    VARCHAR
 );
 
@@ -151,6 +152,9 @@ class Warehouse:
         # by SCHEMA below, so it must run after the table has caught up.
         self.con.execute(
             "ALTER TABLE IF EXISTS generated_cards ADD COLUMN IF NOT EXISTS image_query VARCHAR"
+        )
+        self.con.execute(
+            "ALTER TABLE IF EXISTS card_images ADD COLUMN IF NOT EXISTS url VARCHAR"
         )
         self.con.execute(SCHEMA)
 

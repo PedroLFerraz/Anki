@@ -46,6 +46,7 @@ class ImageResult:
     query: str
     filename: str | None = None
     source: str | None = None       # "duckduckgo" | "cached"
+    url: str = ""                   # where the picture came from, for provenance
     detail: str = ""                # why it failed, when it did
 
     @property
@@ -65,8 +66,9 @@ def _width(value) -> int:
         return 0
 
 
-def search_duckduckgo(query: str, limit: int = 5, attempts: int = DDG_ATTEMPTS) -> list[str]:
-    """Image URLs for a query, retried patiently.
+def search_duckduckgo(query: str, limit: int = 10,
+                      attempts: int = DDG_ATTEMPTS) -> list[tuple[str, str]]:
+    """(image url, page url) for a query, best sources first, retried patiently.
 
     This is by far the better source, so it is worth waiting for: a run is a
     daily batch with nobody watching, and a minute of backoff costs nothing
@@ -82,11 +84,15 @@ def search_duckduckgo(query: str, limit: int = 5, attempts: int = DDG_ATTEMPTS) 
             with DDGS() as ddgs:
                 results = list(ddgs.images(query, max_results=limit))
             urls = [
-                r["image"] for r in results
+                (r["image"], r.get("url") or "")
+                for r in results
                 if r.get("image") and _width(r.get("width")) >= MIN_SOURCE_WIDTH
                 and not _looks_like_junk(r.get("image"))
                 and not _looks_like_junk(r.get("url"))
             ]
+            # Stable within each group, so search relevance still decides
+            # between two equally reputable sources.
+            urls.sort(key=_rank)
             if urls:
                 return urls
             reason = "no results"
@@ -119,6 +125,26 @@ _JUNK_HOSTS = (
 def _looks_like_junk(url: str) -> bool:
     u = (url or "").lower()
     return any(host in u for host in _JUNK_HOSTS)
+
+
+# Where a technical diagram is likely to come from. Search relevance alone put
+# a duck ahead of airflow.apache.org for "airflow deferrable operator
+# triggerer architecture", and taking the first result that downloaded is how
+# it ended up on a card. Ranking by source before spending a check on it means
+# the official documentation gets looked at first.
+_PREFERRED_HOSTS = (
+    ".apache.org", "kubernetes.io", "docker.com", "aws.amazon.com", "cloud.google.com",
+    "learn.microsoft.com", "postgresql.org", "wikipedia.org", "wikimedia.org",
+    ".edu", "github.io", "readthedocs.io", "stackexchange.com", "stackoverflow.com",
+    "researchgate.net", "medium.com", "towardsdatascience.com", "dev.to", "zenn.dev",
+    "databricks.com", "snowflake.com", "confluent.io", "dbt.com", "grafana.com",
+)
+
+
+def _rank(candidate: tuple[str, str]) -> int:
+    """0 for a source worth trying first, 1 for anything else."""
+    page = (candidate[1] or "").lower()
+    return 0 if any(host in page for host in _PREFERRED_HOSTS) else 1
 
 
 # ----------------------------------------------------------------- download
@@ -180,12 +206,12 @@ def fetch(card_uid: str, query: str, media_dir: Path, card: str = "",
 
     source = "duckduckgo"
     checks = 0
-    for url in search_duckduckgo(query):
+    for url, page in search_duckduckgo(query):
         name = download_as_jpeg(url, query, media_dir)
         if not name:
             continue
         if not (verifier and card):
-            return ImageResult(card_uid, query, filename=name, source=source)
+            return ImageResult(card_uid, query, filename=name, source=source, url=page)
         if checks >= max_checks:
             # Every look costs a request on a metered free tier, so stop rather
             # than work through the whole result page.
@@ -196,11 +222,11 @@ def fetch(card_uid: str, query: str, media_dir: Path, card: str = "",
             keep, shows = verifier((media_dir / name).read_bytes(), card, query)
         except Exception as e:
             logger.info("Cannot check images (%s); keeping %s unchecked", e, name)
-            return ImageResult(card_uid, query, filename=name, source=source,
+            return ImageResult(card_uid, query, filename=name, source=source, url=page,
                                detail=f"{UNCHECKED}: {e}")
         checks += 1
         if keep:
-            return ImageResult(card_uid, query, filename=name, source=source,
+            return ImageResult(card_uid, query, filename=name, source=source, url=page,
                                detail=f"shows {shows}")
         logger.info("Rejected an image for %r: it shows %s", query, shows)
         (media_dir / name).unlink(missing_ok=True)

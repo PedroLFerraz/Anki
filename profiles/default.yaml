@@ -26,7 +26,7 @@ weak_cards:
   max_ease: 2100
   max_per_deck: 1
 
-global_quota: 18
+global_quota: 16
 verify: true
 
 # Fetch an illustration when the model judges one genuinely helps.
@@ -42,8 +42,10 @@ inbox: ""
 # length of the list is how many days a full pass takes.
 decks:
   # --- existing decks: extend them in your own voice ---
+  # --- paused: the Data Platform decks get the whole budget for now.
+  # Set a quota above 0 to bring either of these back.
   - deck: DS::SQL
-    daily_quota: 3
+    daily_quota: 0
     card_type: basic
     images: false          # SQL semantics rarely benefit from a picture
     topics:
@@ -56,7 +58,7 @@ decks:
       clearer. Assume a PostgreSQL-flavoured dialect unless the concept is portable.
 
   - deck: DS::Statistics
-    daily_quota: 2
+    daily_quota: 0
     card_type: basic
     topics:
       - hypothesis testing pitfalls and p-value interpretation
@@ -67,7 +69,7 @@ decks:
   # The vocabulary and the trade-offs, before any particular tool.
   - deck: Data Platform::Fundamentals
     new_deck: true
-    daily_quota: 3
+    daily_quota: 4
     card_type: detailed
     topics:
       - "the shape of a data platform: ingestion, storage, transformation, serving"
@@ -118,7 +120,7 @@ decks:
 
   - deck: Data Platform::Docker
     new_deck: true
-    daily_quota: 2
+    daily_quota: 3
     card_type: detailed
     topics:
       - containers versus virtual machines
@@ -136,7 +138,7 @@ decks:
 
   - deck: Data Platform::Kubernetes
     new_deck: true
-    daily_quota: 2
+    daily_quota: 3
     card_type: detailed
     topics:
       - what Kubernetes adds over running containers yourself
@@ -154,7 +156,7 @@ decks:
 
   - deck: Data Platform::AWS
     new_deck: true
-    daily_quota: 2
+    daily_quota: 3
     card_type: cloze
     topics:
       - "S3 objects, prefixes and the folders that do not exist"

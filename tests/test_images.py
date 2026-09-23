@@ -65,7 +65,8 @@ def test_corrupt_image_is_deleted(tmp_path, monkeypatch):
 
 
 def test_duckduckgo_wins_when_it_answers(tmp_path, monkeypatch):
-    monkeypatch.setattr(images, "search_duckduckgo", lambda q, limit=5: ["https://ddg/x.png"])
+    monkeypatch.setattr(images, "search_duckduckgo",
+                        lambda q, limit=10, attempts=6: [("https://ddg/x.png", "https://docs/p")])
     monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
     assert images.fetch("u1", "airflow dag", tmp_path).source == "duckduckgo"
 
@@ -112,7 +113,7 @@ def test_duckduckgo_keeps_trying_until_it_answers(ddg):
         [],                                                      # engine answered with nothing
         [{"image": "https://ddg/good.png", "width": 900}],
     ]
-    assert images.search_duckduckgo("kubernetes control plane") == ["https://ddg/good.png"]
+    assert images.search_duckduckgo("kubernetes control plane") == [("https://ddg/good.png", "")]
     assert ddg.calls == 3
 
 
@@ -127,7 +128,7 @@ def test_width_reported_as_a_string_is_still_usable(ddg):
     comparing it raised, which quietly threw away every result."""
     ddg.script = [[{"image": "https://bing/x.png", "width": "900"},
                    {"image": "https://bing/small.png", "width": "80"}]]
-    assert images.search_duckduckgo("docker layers") == ["https://bing/x.png"]
+    assert images.search_duckduckgo("docker layers") == [("https://bing/x.png", "")]
 
 
 def test_one_failing_job_does_not_sink_the_batch(tmp_path, monkeypatch):
@@ -319,7 +320,8 @@ def test_an_image_the_model_rejects_is_not_used(tmp_path, monkeypatch):
     """A card about S3's flat namespace was illustrated with a stock photo of a
     basketball player, from a page whose title matched the query exactly."""
     monkeypatch.setattr(images, "search_duckduckgo",
-                        lambda q, limit=5, attempts=6: ["https://seo.farm/a.png", "https://ok/b.png"])
+                        lambda q, limit=10, attempts=6: [("https://seo.farm/a.png", "https://a"),
+                                                         ("https://ok/b.png", "https://b")])
     monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
 
     looked = []
@@ -338,7 +340,7 @@ def test_an_image_the_model_rejects_is_not_used(tmp_path, monkeypatch):
 def test_giving_up_rather_than_checking_the_whole_result_page(tmp_path, monkeypatch):
     """Each look costs a request on a metered free tier."""
     monkeypatch.setattr(images, "search_duckduckgo",
-                        lambda q, limit=5, attempts=6: [f"https://x/{i}.png" for i in range(9)])
+                        lambda q, limit=10, attempts=6: [(f"https://x/{i}.png", "") for i in range(9)])
     monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
     looks = []
 
@@ -351,7 +353,8 @@ def test_giving_up_rather_than_checking_the_whole_result_page(tmp_path, monkeypa
 
 
 def test_a_checker_outage_keeps_the_image_and_says_it_is_unchecked(tmp_path, monkeypatch):
-    monkeypatch.setattr(images, "search_duckduckgo", lambda q, limit=5, attempts=6: ["https://x/a.png"])
+    monkeypatch.setattr(images, "search_duckduckgo",
+                        lambda q, limit=10, attempts=6: [("https://x/a.png", "")])
     monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
 
     def down(blob, card, query):
@@ -365,3 +368,23 @@ def test_stock_libraries_and_scraper_buckets_are_skipped():
     assert images._looks_like_junk("https://media.gettyimages.com/photos/x.jpg")
     assert images._looks_like_junk("https://storage.googleapis.com/djiuedjsglnrce/flat-file.jpg")
     assert not images._looks_like_junk("https://docs.aws.amazon.com/images/s3-namespace.png")
+
+
+def test_documentation_is_tried_before_a_random_blog(monkeypatch):
+    """Search relevance put a duck ahead of airflow.apache.org, and taking the
+    first result that downloaded is how it reached a card."""
+    class _DDGS:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def images(self, query, max_results=10):
+            return [
+                {"image": "https://cdn/blog.png", "url": "https://someblog.example/post", "width": 800},
+                {"image": "https://cdn/docs.png", "url": "https://airflow.apache.org/docs/", "width": 800},
+                {"image": "https://cdn/so.png", "url": "https://stackoverflow.com/q/1", "width": 800},
+            ]
+
+    monkeypatch.setattr("ddgs.DDGS", _DDGS)
+    pages = [page for _img, page in images.search_duckduckgo("airflow triggerer")]
+    assert pages[0].startswith("https://airflow.apache.org")
+    assert pages[1].startswith("https://stackoverflow.com")
+    assert pages[2].startswith("https://someblog")      # kept, just tried last
