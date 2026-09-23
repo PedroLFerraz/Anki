@@ -1,0 +1,17 @@
+# The build context is the repo root (the image installs the package from
+# source), but only pyproject.toml and src/ are copied. Everything else is
+# transfer cost — data/ alone is 100MB of collection snapshots.
+.git
+.venv
+data
+build
+dist
+docs
+infra
+android
+*.egg-info
+__pycache__
+.pytest_cache
+.env
+.env.*
+!.env.example
