@@ -111,7 +111,7 @@ def stage_images(ctx: Context, run_date: date) -> dict:
     return {
         "wanted": len(jobs),
         "found": len(found),
-        "by_source": {s: sum(1 for r in found if r.source == s) for s in ("duckduckgo", "wikimedia")},
+        "unchecked": sum(1 for r in found if (r.detail or "").startswith(images.UNCHECKED)),
         "missing": [r.query for r in results if not r.found],
     }
 

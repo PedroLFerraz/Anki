@@ -1,11 +1,13 @@
 """Find and store an illustration for a card.
 
-Two sources, tried in order:
+Images come from web search (DuckDuckGo, which falls back to other engines on
+its own). Wikimedia Commons used to sit behind it as a second source, and was
+removed: its full-text search matches file *descriptions*, so it answers every
+query with something, and for software topics that something was reliably a
+stock photograph. A card with no picture beats a card with the wrong one.
 
-1. **DuckDuckGo** — broad coverage, but it rate-limits aggressively and returns
-   ordinary web images. Fine for private study cards.
-2. **Wikimedia Commons** — a documented API with openly licensed media. Thinner
-   coverage for tooling topics, but it answers when DuckDuckGo throttles.
+Search engines match the words around a picture and never the picture itself,
+so what comes back is checked by a model before it is used — see `fetch`.
 
 Everything is saved as JPEG. Anki imports JPEG reliably; PNG and WebP caused
 import problems in v1, so conversion is unconditional rather than best-effort.
@@ -36,7 +38,6 @@ MAX_CHECKS = 3
 UNCHECKED = "unchecked"
 DDG_BACKOFF_CAP = 60
 USER_AGENT = "AnkiGen/2.1 (personal flashcard generator)"
-COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 
 
 @dataclass
@@ -44,7 +45,7 @@ class ImageResult:
     card_uid: str
     query: str
     filename: str | None = None
-    source: str | None = None       # "duckduckgo" | "wikimedia" | "cached"
+    source: str | None = None       # "duckduckgo" | "cached"
     detail: str = ""                # why it failed, when it did
 
     @property
@@ -120,58 +121,6 @@ def _looks_like_junk(url: str) -> bool:
     return any(host in u for host in _JUNK_HOSTS)
 
 
-# Words that say what kind of picture is wanted rather than what it is of.
-# They are in nearly every query, so they cannot show that a result is relevant.
-_GENERIC = frozenset("diagram chart graph illustration image picture photo "
-                     "example overview architecture ui screenshot icon".split())
-
-
-def _is_relevant(title: str, query: str) -> bool:
-    """Does a Commons filename actually have to do with the query?
-
-    Commons full-text search reads file *descriptions*, so it answers every
-    query with something: "data catalogue ui" came back with a naval ensign
-    photographed for a museum catalogue. Requiring the subject words in the
-    filename is crude, but an unrelated picture on a card is worse than none.
-    """
-    subject = {w for w in re.findall(r"[a-z0-9]+", query.lower())
-               if len(w) > 2 and w not in _GENERIC}
-    if not subject:
-        return False
-    hits = sum(w in title.lower() for w in subject)
-    return hits >= min(2, len(subject))
-
-
-def search_wikimedia(query: str, limit: int = 5) -> list[str]:
-    """Openly licensed images, via the Commons search API."""
-    params = {
-        "action": "query", "format": "json", "generator": "search",
-        "gsrsearch": f"{query} filetype:bitmap", "gsrnamespace": 6, "gsrlimit": limit,
-        "prop": "imageinfo", "iiprop": "url|size", "iiurlwidth": MAX_WIDTH,
-    }
-    try:
-        resp = requests.get(COMMONS_API, params=params,
-                            headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
-        resp.raise_for_status()
-        pages = (resp.json().get("query") or {}).get("pages") or {}
-    except Exception as e:
-        logger.info("Wikimedia search failed for %r: %s", query, e)
-        return []
-
-    urls = []
-    for page in pages.values():
-        info = (page.get("imageinfo") or [{}])[0]
-        # thumburl is already resized; falling back to the full-size original.
-        url = info.get("thumburl") or info.get("url")
-        if not url or _width(info.get("width") or MIN_SOURCE_WIDTH) < MIN_SOURCE_WIDTH:
-            continue
-        if not _is_relevant(page.get("title", ""), query):
-            logger.debug("Wikimedia: dropping %r for %r", page.get("title"), query)
-            continue
-        urls.append(url)
-    return urls
-
-
 # ----------------------------------------------------------------- download
 
 def _filename(query: str, url: str) -> str:
@@ -219,7 +168,7 @@ def download_as_jpeg(url: str, query: str, media_dir: Path) -> str | None:
 
 def fetch(card_uid: str, query: str, media_dir: Path, card: str = "",
           verifier=None, max_checks: int = MAX_CHECKS) -> ImageResult:
-    """First *usable* image for a query, DuckDuckGo first then Wikimedia.
+    """First *usable* image for a query.
 
     With a `verifier`, usable means something looked at the picture and said it
     illustrates the card. Nothing short of that works: search results come from
@@ -229,34 +178,35 @@ def fetch(card_uid: str, query: str, media_dir: Path, card: str = "",
     if not query or len(query.strip()) < 3:
         return ImageResult(card_uid, query, detail="no image query")
 
+    source = "duckduckgo"
     checks = 0
-    for source, search in (("duckduckgo", search_duckduckgo), ("wikimedia", search_wikimedia)):
-        for url in search(query):
-            name = download_as_jpeg(url, query, media_dir)
-            if not name:
-                continue
-            if not (verifier and card):
-                return ImageResult(card_uid, query, filename=name, source=source)
-            if checks >= max_checks:
-                # Every look costs a request on a metered free tier, so stop
-                # rather than work through the whole result page.
-                (media_dir / name).unlink(missing_ok=True)
-                return ImageResult(card_uid, query,
-                                   detail=f"no relevant image in the first {checks} checked")
-            try:
-                keep, shows = verifier((media_dir / name).read_bytes(), card, query)
-            except Exception as e:
-                logger.info("Cannot check images (%s); keeping %s unchecked", e, name)
-                return ImageResult(card_uid, query, filename=name, source=source,
-                                   detail=f"{UNCHECKED}: {e}")
-            checks += 1
-            if keep:
-                return ImageResult(card_uid, query, filename=name, source=source,
-                                   detail=f"shows {shows}")
-            logger.info("Rejected an image for %r: it shows %s", query, shows)
+    for url in search_duckduckgo(query):
+        name = download_as_jpeg(url, query, media_dir)
+        if not name:
+            continue
+        if not (verifier and card):
+            return ImageResult(card_uid, query, filename=name, source=source)
+        if checks >= max_checks:
+            # Every look costs a request on a metered free tier, so stop rather
+            # than work through the whole result page.
             (media_dir / name).unlink(missing_ok=True)
-        logger.info("No usable image from %s for %r", source, query)
-    return ImageResult(card_uid, query, detail="no usable image from either source")
+            return ImageResult(card_uid, query,
+                               detail=f"no relevant image in the first {checks} checked")
+        try:
+            keep, shows = verifier((media_dir / name).read_bytes(), card, query)
+        except Exception as e:
+            logger.info("Cannot check images (%s); keeping %s unchecked", e, name)
+            return ImageResult(card_uid, query, filename=name, source=source,
+                               detail=f"{UNCHECKED}: {e}")
+        checks += 1
+        if keep:
+            return ImageResult(card_uid, query, filename=name, source=source,
+                               detail=f"shows {shows}")
+        logger.info("Rejected an image for %r: it shows %s", query, shows)
+        (media_dir / name).unlink(missing_ok=True)
+
+    logger.info("No usable image for %r", query)
+    return ImageResult(card_uid, query, detail="no usable image found")
 
 
 def fetch_many(jobs: list[tuple], media_dir: Path, workers: int = 3,

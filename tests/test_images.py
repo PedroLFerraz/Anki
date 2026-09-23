@@ -64,60 +64,16 @@ def test_corrupt_image_is_deleted(tmp_path, monkeypatch):
     assert list(tmp_path.glob("*")) == []
 
 
-# ---------------------------------------------------------------- sources
-
-def test_wikimedia_is_used_when_duckduckgo_finds_nothing(tmp_path, monkeypatch):
-    monkeypatch.setattr(images, "search_duckduckgo", lambda q, limit=5: [])
-    monkeypatch.setattr(images, "search_wikimedia", lambda q, limit=5: ["https://commons/x.png"])
-    monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
-    result = images.fetch("u1", "kubernetes pod lifecycle", tmp_path)
-    assert result.found and result.source == "wikimedia"
-
-
 def test_duckduckgo_wins_when_it_answers(tmp_path, monkeypatch):
     monkeypatch.setattr(images, "search_duckduckgo", lambda q, limit=5: ["https://ddg/x.png"])
-    monkeypatch.setattr(images, "search_wikimedia",
-                        lambda q, limit=5: pytest.fail("should not reach the fallback"))
     monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
     assert images.fetch("u1", "airflow dag", tmp_path).source == "duckduckgo"
 
 
 def test_both_sources_failing_is_recorded_not_raised(tmp_path, monkeypatch):
     monkeypatch.setattr(images, "search_duckduckgo", lambda q, limit=5: [])
-    monkeypatch.setattr(images, "search_wikimedia", lambda q, limit=5: [])
     result = images.fetch("u1", "something unillustratable", tmp_path)
     assert not result.found and "no usable image" in result.detail
-
-
-def test_wikimedia_parses_the_api_shape(monkeypatch):
-    payload = {"query": {"pages": {
-        "1": {"title": "File:Kubernetes pod lifecycle.png",
-              "imageinfo": [{"thumburl": "https://c/thumb.jpg", "width": 800}]},
-        "2": {"title": "File:Kubernetes pod icon.png",
-              "imageinfo": [{"url": "https://c/tiny.jpg", "width": 50}]}}}}
-
-    class R:
-        def raise_for_status(self): pass
-        def json(self): return payload
-
-    monkeypatch.setattr(images.requests, "get", lambda *a, **k: R())
-    got = images.search_wikimedia("kubernetes pod lifecycle")
-    assert got == ["https://c/thumb.jpg"]                   # too-small one dropped
-
-
-def test_wikimedia_results_unrelated_to_the_query_are_dropped(monkeypatch):
-    """Commons searches descriptions, so it answers everything: "data catalogue
-    ui" once came back with a naval ensign photographed for a museum catalogue."""
-    payload = {"query": {"pages": {"1": {
-        "title": "File:White Ensign of the Royal Navy.jpg",
-        "imageinfo": [{"thumburl": "https://c/ensign.jpg", "width": 800}]}}}}
-
-    class R:
-        def raise_for_status(self): pass
-        def json(self): return payload
-
-    monkeypatch.setattr(images.requests, "get", lambda *a, **k: R())
-    assert images.search_wikimedia("data catalogue ui") == []
 
 
 # ---------------------------------------------------------------- duckduckgo
@@ -335,7 +291,7 @@ def test_images_are_only_fetched_for_surviving_cards(wh, tmp_path, monkeypatch, 
     result = pipeline.stage_images(ctx, RUN_DATE)
     assert [j[0] for j in asked] == ["keep"]
     assert asked[0][2].startswith("Kept?")          # the card text goes along, to check the picture against
-    assert result["found"] == 1 and result["by_source"]["duckduckgo"] == 1
+    assert result["found"] == 1 and result["wanted"] == 1
 
 
 def test_images_stage_skipped_for_decks_that_opt_out(wh, tmp_path, monkeypatch, cfg, profile):
@@ -364,7 +320,6 @@ def test_an_image_the_model_rejects_is_not_used(tmp_path, monkeypatch):
     basketball player, from a page whose title matched the query exactly."""
     monkeypatch.setattr(images, "search_duckduckgo",
                         lambda q, limit=5, attempts=6: ["https://seo.farm/a.png", "https://ok/b.png"])
-    monkeypatch.setattr(images, "search_wikimedia", lambda q, limit=5: [])
     monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
 
     looked = []
@@ -384,7 +339,6 @@ def test_giving_up_rather_than_checking_the_whole_result_page(tmp_path, monkeypa
     """Each look costs a request on a metered free tier."""
     monkeypatch.setattr(images, "search_duckduckgo",
                         lambda q, limit=5, attempts=6: [f"https://x/{i}.png" for i in range(9)])
-    monkeypatch.setattr(images, "search_wikimedia", lambda q, limit=5: [])
     monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
     looks = []
 
