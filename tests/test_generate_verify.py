@@ -189,6 +189,19 @@ def test_one_failing_request_does_not_sink_the_run(wh, monkeypatch):
     assert result["prompt_tokens"] == 5
 
 
+def test_losing_every_request_fails_the_run(wh, monkeypatch):
+    """A rate-limited run once finished green with an empty package, because
+    the later stages cannot tell "nothing generated" from "nothing to do"."""
+    def call(prompt):
+        raise RuntimeError("Error code: 429 - rate limit exceeded: free-models-per-day")
+
+    monkeypatch.setattr(llm, "call_json", call)
+    with pytest.raises(generate.GenerationFailed, match="429"):
+        generate.run(wh, RUN_DATE, [_request(rid="a"), _request(rid="b")])
+    # The partition is still replaced first, so a retry starts from a clean slate.
+    assert wh.scalar("SELECT COUNT(*) FROM generated_cards WHERE run_date = ?", [RUN_DATE]) == 0
+
+
 # ---------------------------------------------------------------- verify
 
 def _cards():

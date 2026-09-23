@@ -17,6 +17,10 @@ from ankigen import llm
 
 logger = logging.getLogger(__name__)
 
+
+class GenerationFailed(RuntimeError):
+    """Every request failed, so the run has nothing to carry forward."""
+
 CLOZE_PLAIN = re.compile(r"\{\{c\d+::(.*?)(?:::[^}]*)?\}\}")
 
 
@@ -158,6 +162,17 @@ def run(wh, run_date: date, requests: list[dict]) -> dict:
             seen.add(r[1])
             unique.append(r)
     wh.replace_partition("generated_cards", run_date, GENERATED_COLUMNS, unique)
+    if requests and not unique:
+        # Downstream stages treat "no cards" as "nothing to do", so without this
+        # a run that lost every request to a rate limit finishes green with an
+        # empty package — the one outcome you would want an alert for.
+        detail = failures[0]["error"] if failures else "the model returned no usable cards"
+        raise GenerationFailed(
+            f"All {len(requests)} request(s) produced nothing. First failure: {detail[:400]}"
+        )
+    if failures:
+        logger.warning("%d of %d request(s) failed; continuing with %d card(s)",
+                       len(failures), len(requests), len(unique))
     return {
         "cards": len(unique),
         "requested": sum(r["n"] for r in requests),
