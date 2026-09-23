@@ -10,6 +10,9 @@ requires-python = ">=3.10"
 dependencies = [
     "ddgs>=9.0",
     "duckdb>=1.0",
+    # Embeddings from an ONNX model in-process, so dedup needs no server and
+    # no key. It is what lets the pipeline run on a throwaway CI machine.
+    "fastembed>=0.8",
     "genanki>=0.13",
     # Every downloaded illustration is re-encoded as JPEG: Anki's importer
     # silently dropped some of the PNGs and WebPs image search returns.

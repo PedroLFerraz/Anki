@@ -17,6 +17,7 @@ from __future__ import annotations
 import difflib
 import logging
 from datetime import date
+from functools import lru_cache
 
 import numpy as np
 
@@ -72,6 +73,19 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (na * nb))
 
 
+@lru_cache(maxsize=2)
+def _fastembed(model: str):
+    """The ONNX model, loaded once. First use downloads ~50MB and takes a few
+    seconds; after that it embeds about a thousand texts a second."""
+    try:
+        from fastembed import TextEmbedding
+    except ImportError as e:                      # pragma: no cover - env-specific
+        raise RuntimeError(
+            "EMBEDDING_PROVIDER=fastembed needs the fastembed package: pip install fastembed"
+        ) from e
+    return TextEmbedding(model)
+
+
 class Embedder:
     """Embeds text through the configured provider, caching in the warehouse."""
 
@@ -86,6 +100,8 @@ class Embedder:
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
         ensure_free(self.cfg["provider"], self.model, settings.allow_paid_models)
+        if self.cfg["provider"] == "fastembed":
+            return [v.tolist() for v in _fastembed(self.model).embed(texts)]
         if self.cfg["provider"] == "gemini":
             client = llm._get_gemini_client()
             result = client.models.embed_content(model=self.model, contents=texts)

@@ -96,6 +96,12 @@ PROVIDERS: dict[str, dict] = {
 # on its own path in agents.py / embeddings.py.
 NATIVE_PROVIDERS = {"gemini"}
 
+# Embeddings computed in-process from an ONNX model: no server, no key, no
+# quota, and nothing to be "not running". That is what makes the pipeline
+# runnable on a throwaway CI machine, where localhost has no Ollama.
+FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"
+FASTEMBED_THRESHOLD = 0.90
+
 # Used when a model has no measured threshold of its own.
 DEFAULT_SEMANTIC_THRESHOLD = 0.90
 
@@ -255,7 +261,19 @@ class Settings(BaseSettings):
             elif PROVIDERS.get(chat, {}).get("embedding_model"):
                 name = chat
             else:
-                name = "ollama"
+                # Not Ollama: the fallback should be something that cannot be
+                # switched off or rate limited, and that exists on a machine
+                # the pipeline has never run on before.
+                name = "fastembed"
+
+        if name == "fastembed":
+            return {
+                "provider": "fastembed",
+                "base_url": None,
+                "api_key": "",
+                "model": self.embedding_model_name or FASTEMBED_MODEL,
+                "threshold": self.semantic_threshold or FASTEMBED_THRESHOLD,
+            }
 
         if name in NATIVE_PROVIDERS:
             return {

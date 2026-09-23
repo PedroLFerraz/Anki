@@ -27,8 +27,16 @@ def test_overrides_win():
     assert (cfg["base_url"], cfg["model"]) == ("https://x/v1", "m")
 
 
-def test_embeddings_fall_back_to_ollama_when_provider_has_none():
-    assert _s(llm_provider="groq").resolve_embedding()["provider"] == "ollama"
+def test_embeddings_fall_back_to_an_in_process_model():
+    """The fallback has to work on a machine that has never run this before —
+    a CI runner has no Ollama on localhost."""
+    cfg = _s(llm_provider="groq").resolve_embedding()
+    assert cfg["provider"] == "fastembed"
+    assert cfg["base_url"] is None and cfg["api_key"] == ""
+
+
+def test_ollama_embeddings_still_available_when_asked_for():
+    assert _s(embedding_provider="ollama").resolve_embedding()["provider"] == "ollama"
 
 
 def test_embeddings_stay_on_provider_that_supports_them():
@@ -71,6 +79,7 @@ def test_checker_can_be_a_different_model_or_provider():
 def test_threshold_comes_from_the_embedding_model():
     """Similarity scales differ per model, so the threshold travels with it."""
     assert _s(llm_provider="ollama").resolve_embedding()["threshold"] == 0.90
+    assert _s(embedding_provider="fastembed").resolve_embedding()["threshold"] == 0.90
     assert _s(llm_provider="openrouter", llm_api_key="k").resolve_embedding()["threshold"] == 0.85
     assert _s(llm_provider="openrouter", llm_api_key="k",
               semantic_threshold=0.75).resolve_embedding()["threshold"] == 0.75
