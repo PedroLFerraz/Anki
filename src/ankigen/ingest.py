@@ -10,9 +10,12 @@ import hashlib
 import html
 import json
 import logging
+import os
 import re
+import shutil
 import sqlite3
-import time
+import threading
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -70,39 +73,122 @@ def strip_cloze(text: str) -> str:
 
 # ---------------------------------------------------------------- snapshot
 
-def snapshot(collection: str | Path, dest: str | Path, retries: int = 3) -> Path:
-    """Consistent point-in-time copy of the collection, WAL included."""
+def _backup(collection: Path, dest: Path) -> None:
+    src = sqlite3.connect(f"{collection.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+    try:
+        dst = sqlite3.connect(dest)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+
+
+def _backup_within(collection: Path, dest: Path, timeout_s: float) -> bool:
+    """Run the backup on a daemon thread and give up after `timeout_s`.
+
+    A daemon thread matters: SQLite's backup blocks rather than failing when
+    Anki holds the lock, and a normal thread would keep the interpreter alive
+    at exit — a scheduled run would never finish.
+    """
+    outcome: list = []
+
+    def work():
+        try:
+            _backup(collection, dest)
+            outcome.append(None)
+        except BaseException as e:        # reported, not raised, off-thread
+            outcome.append(e)
+
+    worker = threading.Thread(target=work, daemon=True, name="ankigen-backup")
+    worker.start()
+    worker.join(timeout_s)
+    if worker.is_alive():
+        return False                      # wedged on the lock; abandon it
+    if outcome and isinstance(outcome[0], BaseException):
+        logger.info("Backup failed (%s).", outcome[0])
+        return False
+    return bool(outcome)
+
+
+def _copy_with_wal(collection: Path, dest: Path) -> None:
+    """Copy the database plus its sidecars, then let SQLite recover the WAL.
+
+    Slightly less safe than the backup API — Anki could write mid-copy — but it
+    does not need a lock, so it still works while Anki is open.
+    """
+    shutil.copy2(collection, dest)
+    for suffix in ("-wal", "-shm"):
+        side = collection.with_name(collection.name + suffix)
+        if side.exists():
+            shutil.copy2(side, dest.with_name(dest.name + suffix))
+    # Opening the copy replays the WAL into the main file.
+    con = sqlite3.connect(dest)
+    try:
+        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        con.commit()
+    finally:
+        con.close()
+
+
+def _sanity_check(dest: Path) -> int:
+    con = sqlite3.connect(f"{dest.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        return con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+    finally:
+        con.close()
+
+
+def snapshot(collection: str | Path, dest: str | Path, timeout_s: float = 10.0) -> Path:
+    """Point-in-time copy of the collection, WAL included.
+
+    Anki keeps the live collection locked while it is open, and SQLite's backup
+    API *blocks* rather than failing when it cannot get a read lock — which once
+    hung a whole run. So the backup runs with a deadline, and falls back to
+    copying the files directly, which needs no lock.
+    """
     collection, dest = Path(collection), Path(dest)
     if not collection.exists():
         raise FileNotFoundError(
             f"Anki collection not found: {collection}. Set ANKI_COLLECTION_PATH."
         )
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.unlink(missing_ok=True)
+    for path in (dest, dest.with_name(dest.name + "-wal"), dest.with_name(dest.name + "-shm")):
+        path.unlink(missing_ok=True)
 
-    last_error: Exception | None = None
-    for attempt in range(retries):
+    # The backup writes to its own file and is promoted only on success: a
+    # thread wedged on Anki's lock keeps its handle open, and Windows will not
+    # let us delete or overwrite a file another handle still holds.
+    staging = dest.with_name(f"{dest.name}.backup-tmp")
+    with suppress(OSError):
+        staging.unlink(missing_ok=True)
+
+    if _backup_within(collection, staging, timeout_s):
         try:
-            src = sqlite3.connect(f"{collection.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
-            try:
-                dst = sqlite3.connect(dest)
-                try:
-                    src.backup(dst)
-                finally:
-                    dst.close()
-            finally:
-                src.close()
+            os.replace(staging, dest)
             return dest
-        except sqlite3.OperationalError as e:
-            last_error = e
-            if "locked" not in str(e).lower() and "busy" not in str(e).lower():
-                raise
-            time.sleep(2 * (attempt + 1))
+        except OSError as e:
+            logger.info("Could not promote the backup (%s); copying instead.", e)
 
-    raise CollectionLocked(
-        "The Anki collection is locked — Anki desktop holds it exclusively while "
-        f"open. Close Anki and retry. ({last_error})"
+    try:
+        _copy_with_wal(collection, dest)
+        notes = _sanity_check(dest)
+    except Exception as e:
+        raise CollectionLocked(
+            f"Could not read the Anki collection at {collection}: {e}. "
+            "Close Anki desktop and try again."
+        ) from e
+
+    if notes == 0:
+        raise CollectionLocked(
+            f"The snapshot of {collection} came out empty. Close Anki desktop and try again."
+        )
+    logger.warning(
+        "Anki is open, so the snapshot was copied rather than backed up. It is "
+        "consistent unless Anki wrote to the collection during the copy."
     )
+    return dest
 
 
 # ---------------------------------------------------------------- parsing
