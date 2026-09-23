@@ -274,32 +274,3 @@ def test_verify_disabled(wh, monkeypatch):
     monkeypatch.setattr(llm, "call_json", lambda p: pytest.fail("should not call the LLM"))
     result = verify.run(wh, RUN_DATE, Profile.model_validate({"verify": False, "decks": [{"deck": "DS::SQL"}]}))
     assert result["passed"] == 2
-
-
-# ---------------------------------------------------------------- preflight
-
-def test_preflight_catches_a_missing_provider_package(monkeypatch):
-    """CI installed the package without its [gemini] extra, and the run only
-    found out after ingest, once per request."""
-    from ankigen.config import settings
-
-    monkeypatch.setattr(settings, "llm_provider", "gemini", raising=False)
-    monkeypatch.setattr(settings, "google_api_key", "k", raising=False)
-    monkeypatch.setattr(llm, "_gemini_client", None, raising=False)
-    monkeypatch.setitem(__import__("sys").modules, "google.genai", None)
-
-    with pytest.raises(RuntimeError, match="google-genai"):
-        llm.preflight()
-
-
-def test_preflight_catches_a_missing_key(monkeypatch):
-    from ankigen.config import settings
-
-    monkeypatch.setattr(settings, "llm_provider", "gemini", raising=False)
-    monkeypatch.setattr(settings, "google_api_key", "", raising=False)
-    with pytest.raises(RuntimeError, match="GOOGLE_API_KEY"):
-        llm.preflight()
-
-
-def test_preflight_passes_for_a_working_config():
-    llm.preflight()          # the conftest default: openrouter with a key

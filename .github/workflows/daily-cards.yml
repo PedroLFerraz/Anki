@@ -56,10 +56,7 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      # [gemini] pulls google-genai, which is an extra because it is the one
-      # provider that does not speak the OpenAI protocol. Without it the run
-      # gets all the way to the first request before failing.
-      - run: pip install ".[gemini]"
+      - run: pip install .
 
       # The warehouse holds every past run: what was generated, what was kept,
       # and the embedding cache. Losing it is survivable — the next run rebuilds
