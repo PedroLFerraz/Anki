@@ -52,6 +52,21 @@ def test_duplicates_of_existing_notes_are_dropped(wh, modern_collection, tmp_pat
     assert result["semantic"] is True
 
 
+def test_a_card_you_already_have_in_another_deck_still_counts(
+        wh, modern_collection, tmp_path, fake_embeddings, cfg):
+    """Knowledge is not new because a different deck asked for it.
+
+    The collection's CTE card lives in DS::SQL; generating it again under
+    Data Platform would just show you the same fact twice.
+    """
+    ingest(wh, RUN_DATE, modern_collection, tmp_path / "raw")
+    _seed(wh, [("u1", "Data Platform::Fundamentals", "What is a CTE?", "A named subquery.")])
+    dedup.run(wh, RUN_DATE)
+    [row] = wh.query("SELECT is_dup, reason FROM dedup_results WHERE run_date = ?", [RUN_DATE])
+    assert row["is_dup"] is True
+    assert "in DS::SQL" in row["reason"]          # says which deck already has it
+
+
 def test_low_threshold_model_catches_more(wh, modern_collection, tmp_path, fake_embeddings, cfg, monkeypatch):
     """A model whose scores run lower needs a lower threshold to catch the same pair."""
     from ankigen import dedup as d

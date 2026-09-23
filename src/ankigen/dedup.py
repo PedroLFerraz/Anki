@@ -36,8 +36,23 @@ NEAR_DUP_MARGIN = 0.10
 NEAR_DUP = "near-dup"
 
 
+# How many nearest-by-meaning notes to also compare word by word.
+FUZZY_SHORTLIST = 20
+
+
 class EmbeddingsUnavailable(RuntimeError):
     """Semantic dedup was asked for and could not run."""
+
+
+def _where(card: dict, match: dict) -> str:
+    """The matched card's text, naming its deck when it is a different one.
+
+    Worth saying: "you already have this in DS::SQL" is a different message
+    from "you already have this here", and only one of them is surprising.
+    """
+    deck = match.get("deck") or ""
+    elsewhere = f" in {deck}" if deck and deck != card.get("deck") else ""
+    return f"{elsewhere}: {match['front'][:80]}"
 BATCH = 64
 _ARTICLES = ("the ", "a ", "an ", "la ", "le ", "el ", "der ", "die ", "das ")
 
@@ -131,24 +146,29 @@ def run(wh, run_date: date, use_embeddings: bool = True) -> dict:
     )
     target_decks = sorted({c["deck"] for c in candidates})
 
-    existing_by_deck: dict[str, list[dict]] = {}
     notes = wh.query("SELECT deck, front, back, content_hash FROM raw_notes WHERE run_date = ?", [run_date])
     prior = wh.query(
         "SELECT deck, front, back FROM card_outcomes WHERE outcome = 'kept' AND run_date < ?",
         [run_date],
     )
-    for deck in target_decks:
-        pool = [n for n in notes if in_deck(n["deck"], deck)]
-        pool += [{**p, "content_hash": content_hash(p["front"], p["back"])}
-                 for p in prior if p["deck"] == deck]
-        existing_by_deck[deck] = pool
+    # One pool for the whole collection, not one per deck. A fact you already
+    # have a card for in DS::SQL is not new knowledge because this run asked
+    # for it under Data Platform — you would simply be shown it twice.
+    everything = [dict(n) for n in notes]
+    everything += [{**p, "content_hash": content_hash(p["front"], p["back"])} for p in prior]
+
+    # Fuzzy-only runs stay inside the deck: difflib against a whole collection
+    # is thousands of comparisons per card, and without embeddings there is no
+    # cheap way to shortlist what is worth comparing.
+    existing_by_deck = {
+        deck: [n for n in everything if in_deck(n["deck"], deck)] for deck in target_decks
+    }
 
     embedder = Embedder(wh) if use_embeddings else None
     threshold = embedder.threshold if embedder else 0.90
     vectors: dict[str, np.ndarray] = {}
     if embedder and embedder.available:
-        texts = {n["content_hash"]: f"{n['front']} {n['back']}"
-                 for pool in existing_by_deck.values() for n in pool}
+        texts = {n["content_hash"]: f"{n['front']} {n['back']}" for n in everything}
         texts.update({content_hash(c["front"], c["back"]): f"{c['front']} {c['back']}" for c in candidates})
         vectors = embedder.vectors(texts)
 
@@ -165,41 +185,58 @@ def run(wh, run_date: date, use_embeddings: bool = True) -> dict:
         )
 
     rows = []
+    # Semantic search runs over the whole collection at once, so the pool is
+    # normalised once here rather than rebuilt for every card.
+    searchable = [n for n in everything if n["content_hash"] in vectors] if vectors else []
+    matrix = _normalise([vectors[n["content_hash"]] for n in searchable]) if searchable else None
+
     for deck in target_decks:
-        pool = list(existing_by_deck[deck])
+        fuzzy_pool = list(existing_by_deck[deck])
         for card in (c for c in candidates if c["deck"] == deck):
             is_dup, reason, best = False, "", 0.0
-
-            for n in pool:
-                ratio = fuzzy_ratio(card["front"], n["front"])
-                if ratio >= FUZZY_THRESHOLD:
-                    is_dup, reason, best = True, f"fuzzy {ratio:.2f}: {n['front'][:80]}", ratio
-                    break
-
             card_vec = vectors.get(content_hash(card["front"], card["back"]))
-            if not is_dup and card_vec is not None:
-                pool_vecs = [(n, vectors[n["content_hash"]]) for n in pool if n["content_hash"] in vectors
-                             and vectors[n["content_hash"]].shape == card_vec.shape]
-                if pool_vecs:
-                    sims = _normalise([v for _, v in pool_vecs]) @ (card_vec / (np.linalg.norm(card_vec) or 1.0))
-                    j = int(np.argmax(sims))
+
+            if matrix is not None and card_vec is not None and card_vec.shape[0] == matrix.shape[1]:
+                sims = matrix @ (card_vec / (np.linalg.norm(card_vec) or 1.0))
+                # difflib over a whole collection is far too slow, so the
+                # nearest few by meaning are the only ones worth comparing
+                # word by word.
+                shortlist = np.argsort(sims)[::-1][:FUZZY_SHORTLIST]
+                for idx in shortlist:
+                    n = searchable[int(idx)]
+                    ratio = fuzzy_ratio(card["front"], n["front"])
+                    if ratio >= FUZZY_THRESHOLD:
+                        is_dup, reason, best = True, f"fuzzy {ratio:.2f}{_where(card, n)}", ratio
+                        break
+                if not is_dup:
+                    j = int(shortlist[0])
                     best = float(sims[j])
                     if best >= threshold:
                         is_dup = True
-                        reason = f"semantic {best:.2f}: {pool_vecs[j][0]['front'][:80]}"
+                        reason = f"semantic {best:.2f}{_where(card, searchable[j])}"
                     elif best >= threshold - NEAR_DUP_MARGIN:
                         # Measured on real pairs, this band holds both genuine
                         # rewordings and cards that merely share a topic — the
                         # control plane's components score 0.62 against the
                         # node's. Dropping them silently loses good cards, so
                         # they ship with a tag and you decide in one click.
-                        reason = f"near-dup {best:.2f}: {pool_vecs[j][0]['front'][:80]}"
+                        reason = f"near-dup {best:.2f}{_where(card, searchable[j])}"
+            else:
+                for n in fuzzy_pool:
+                    ratio = fuzzy_ratio(card["front"], n["front"])
+                    if ratio >= FUZZY_THRESHOLD:
+                        is_dup, reason, best = True, f"fuzzy {ratio:.2f}{_where(card, n)}", ratio
+                        break
 
             rows.append((run_date, card["card_uid"], is_dup, reason or None, best or None))
             if not is_dup:
                 # Later cards in this run must not duplicate this one either.
-                pool.append({"front": card["front"], "back": card["back"],
-                             "content_hash": content_hash(card["front"], card["back"])})
+                twin = {"deck": card["deck"], "front": card["front"], "back": card["back"],
+                        "content_hash": content_hash(card["front"], card["back"])}
+                fuzzy_pool.append(twin)
+                if matrix is not None and card_vec is not None and card_vec.shape[0] == matrix.shape[1]:
+                    searchable.append(twin)
+                    matrix = np.vstack([matrix, card_vec / (np.linalg.norm(card_vec) or 1.0)])
 
     wh.replace_partition(
         "dedup_results", run_date, ("run_date", "card_uid", "is_dup", "reason", "similarity"), rows
