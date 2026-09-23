@@ -19,6 +19,22 @@ on:
     - cron: "0 9 * * *"      # 09:00 UTC = 06:00 America/Sao_Paulo
   workflow_dispatch:
     inputs:
+      deck:
+        description: "One deck to write for. Blank runs today's whole plan."
+        required: false
+        type: string
+      topic:
+        description: "What to write about (needs a deck)."
+        required: false
+        type: string
+      prompt:
+        description: "Extra steer on top of the profile (needs a deck)."
+        required: false
+        type: string
+      count:
+        description: "How many cards (needs a deck). Blank uses the deck's quota."
+        required: false
+        type: string
       run_date:
         description: "Date to generate for (YYYY-MM-DD). Blank means today."
         required: false
@@ -91,11 +107,16 @@ jobs:
           # meter per model, so this also doubles the daily allowance.
           VERIFY_MODEL: ${{ vars.VERIFY_MODEL || 'gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.1-flash-lite' }}
         run: |
-          if [ -n "${{ inputs.run_date }}" ]; then
-            python -m ankigen run --date "${{ inputs.run_date }}"
-          else
-            python -m ankigen run
-          fi
+          # Built up rather than branched: the four inputs are independent,
+          # and the CLI already rejects a topic or prompt with no deck.
+          args=()
+          [ -n "${{ inputs.run_date }}" ] && args+=(--date "${{ inputs.run_date }}")
+          [ -n "${{ inputs.deck }}" ]     && args+=(--deck "${{ inputs.deck }}")
+          [ -n "${{ inputs.topic }}" ]    && args+=(--topic "${{ inputs.topic }}")
+          [ -n "${{ inputs.prompt }}" ]   && args+=(--prompt "${{ inputs.prompt }}")
+          [ -n "${{ inputs.count }}" ]    && args+=(--count "${{ inputs.count }}")
+          echo "ankigen run ${args[*]}"
+          python -m ankigen run "${args[@]}"
 
       - name: Save the warehouse
         if: always()            # a failed generate still advanced ingest

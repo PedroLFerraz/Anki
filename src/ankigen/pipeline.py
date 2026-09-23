@@ -25,10 +25,20 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class AdHoc:
+    """A run asked for by hand: this deck, optionally this topic and steer."""
+    deck: str
+    topic: str = ""
+    extra: str = ""
+    n: int = 0
+
+
+@dataclass
 class Context:
     settings: Settings
     profile: Profile
     wh: Warehouse
+    ad_hoc: AdHoc | None = None
 
     @property
     def raw_dir(self) -> Path:
@@ -56,10 +66,16 @@ def stage_target(ctx: Context, run_date: date) -> dict:
     notes = ingest.load_notes(ctx.wh, run_date)
     if not notes:
         raise RuntimeError(f"No ingested notes for {run_date}. Run the ingest stage first.")
-    problems = ctx.profile.validate_against({n.deck for n in notes})
+    problems = [] if ctx.ad_hoc else ctx.profile.validate_against({n.deck for n in notes})
     if problems:
         raise ValueError("Profile does not match the collection:\n  " + "\n  ".join(problems))
-    reqs = targeting.build_requests(ctx.profile, notes, run_date)
+    if ctx.ad_hoc:
+        reqs = targeting.ad_hoc_request(
+            ctx.profile, notes, run_date, ctx.ad_hoc.deck,
+            topic=ctx.ad_hoc.topic, n=ctx.ad_hoc.n, extra=ctx.ad_hoc.extra,
+        )
+    else:
+        reqs = targeting.build_requests(ctx.profile, notes, run_date)
     targeting.save_requests(ctx.wh, run_date, reqs)
     return {
         "requests": len(reqs),

@@ -67,10 +67,25 @@ def run(
         None, "--stage", "-s", help=f"Run only these stages: {', '.join(pipeline.STAGES)}."
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Ingest and plan only; no LLM calls."),
+    deck: Optional[str] = typer.Option(
+        None, "--deck", help="Write for this deck only, instead of today's plan."
+    ),
+    topic: Optional[str] = typer.Option(
+        None, "--topic", help="What to write about. Needs --deck."
+    ),
+    prompt: Optional[str] = typer.Option(
+        None, "--prompt", help="Extra steer for this run, on top of the profile. Needs --deck."
+    ),
+    count: int = typer.Option(0, "--count", "-n", help="How many cards. Needs --deck."),
 ):
-    """Run the daily pipeline."""
+    """Run the daily pipeline, or one deck on demand with --deck."""
+    if not deck and (topic or prompt or count):
+        raise typer.BadParameter("--topic, --prompt and --count only make sense with --deck.")
+
     d = _date(run_date)
     ctx = pipeline.open_context(profile)
+    if deck:
+        ctx.ad_hoc = pipeline.AdHoc(deck=deck, topic=topic or "", extra=prompt or "", n=count)
     try:
         results = pipeline.run(ctx, d, stages=stage, dry_run=dry_run)
     finally:
@@ -199,6 +214,65 @@ def sync_collection(
 
     typer.echo(f"{dest}  {size / 1e6:.1f} MB" + (f"  (was {before / 1e6:.1f} MB)" if before else ""))
     typer.echo(f"\nCommit it:\n  git add {dest} && git commit -m \"collection: refresh\" && git push")
+
+
+@app.command()
+def reset(
+    yes: bool = typer.Option(False, "--yes", help="Actually do it."),
+    keep_embeddings: bool = typer.Option(
+        True, "--keep-embeddings/--drop-embeddings",
+        help="Keep the cached embeddings of your collection; they cost 90s to rebuild.",
+    ),
+):
+    """Throw away everything this project has generated and start fresh.
+
+    Deletes the warehouse, the snapshots, the downloaded images and the
+    packages. It does not touch your Anki collection: cards already imported
+    are yours, and Anki is the only thing that should write to it. To drop
+    those, search `tag:ankigen` in Anki's browser and delete the notes.
+    """
+    import shutil
+
+    data = Path(settings.data_dir)
+    targets = [data / "warehouse.duckdb", data / "raw", data / "media",
+               data / "out", data / "curated"]
+    present = [t for t in targets if t.exists()]
+    if not present:
+        typer.echo("Nothing to clean.")
+        return
+
+    cached = 0
+    if keep_embeddings and (data / "warehouse.duckdb").exists():
+        from ankigen.warehouse import Warehouse
+        wh = Warehouse(data / "warehouse.duckdb")
+        try:
+            cached = wh.scalar("SELECT COUNT(*) FROM embedding_cache") or 0
+            rows = wh.query("SELECT content_hash, model, vector FROM embedding_cache")
+        finally:
+            wh.close()
+
+    for t in present:
+        size = sum(f.stat().st_size for f in t.rglob("*") if f.is_file()) if t.is_dir() else t.stat().st_size
+        typer.echo(f"  {'would delete' if not yes else 'deleting'}  {t}  ({size / 1e6:.1f} MB)")
+    if not yes:
+        typer.echo("\nRe-run with --yes to go ahead.")
+        return
+
+    for t in present:
+        shutil.rmtree(t) if t.is_dir() else t.unlink()
+
+    if keep_embeddings and cached:
+        from ankigen.warehouse import Warehouse
+        wh = Warehouse(data / "warehouse.duckdb")
+        try:
+            wh.insert("embedding_cache", ("content_hash", "model", "vector"),
+                      [(r["content_hash"], r["model"], r["vector"]) for r in rows], or_ignore=True)
+        finally:
+            wh.close()
+        typer.echo(f"\nKept {cached} cached embedding(s).")
+
+    typer.echo("\nClean. Your Anki collection is untouched — to remove cards already")
+    typer.echo("imported, search `tag:ankigen` in Anki's browser and delete them.")
 
 
 @app.command("audit-images")

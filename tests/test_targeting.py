@@ -112,3 +112,36 @@ def test_nearest_ignores_unrelated_cards(notes):
     assert nearest("window functions over partitions", sql, 10) == [
         "How do window functions differ from GROUP BY?"
     ]
+
+
+# ------------------------------------------------------------------ ad hoc
+
+def test_ad_hoc_request_overrides_the_plan_but_keeps_the_profile(profile, notes):
+    from ankigen.targeting import ad_hoc_request
+
+    [req] = ad_hoc_request(profile, notes, RUN_DATE, "DS::SQL",
+                           topic="window frames", n=2,
+                           extra="Use a concrete ORDER BY example.")
+    assert (req.deck, req.n, req.topic) == ("DS::SQL", 2, "window frames")
+    assert 'Write exactly 2 new cards about: "window frames".' in req.prompt
+    assert "Use a concrete ORDER BY example." in req.prompt
+    assert "Use backticks for SQL." in req.prompt          # deck instructions still apply
+    assert "Be concise." in req.prompt                      # and the style rules
+    assert "Q: " in req.prompt                              # and examples from your cards
+
+
+def test_ad_hoc_works_for_a_deck_the_profile_never_heard_of(profile, notes):
+    from ankigen.targeting import ad_hoc_request
+
+    [req] = ad_hoc_request(profile, notes, RUN_DATE, "Data Platform::Terraform")
+    assert req.deck == "Data Platform::Terraform"
+    assert req.reason == "gap"                              # no topic given
+    assert req.style_examples                               # borrows your voice from elsewhere
+
+
+def test_ad_hoc_is_reproducible(profile, notes):
+    from ankigen.targeting import ad_hoc_request
+
+    a = ad_hoc_request(profile, notes, RUN_DATE, "DS::SQL", topic="joins")
+    b = ad_hoc_request(profile, notes, RUN_DATE, "DS::SQL", topic="joins")
+    assert a[0].request_id == b[0].request_id and a[0].prompt == b[0].prompt

@@ -45,6 +45,8 @@ class GenerationRequest:
     style_examples: list[tuple[str, str]] = field(default_factory=list)
     avoid: list[str] = field(default_factory=list)
     prompt: str = ""
+    # Free-text steer for a one-off run, from `ankigen run --prompt`.
+    extra: str = ""
 
 
 # ------------------------------------------------------------ helpers
@@ -137,6 +139,11 @@ def render_prompt(req: GenerationRequest, profile: Profile, target: DeckTarget) 
     else:
         task = f'Write exactly {req.n} new cards about: "{req.topic}".'
 
+    if getattr(req, "extra", ""):
+        # What the person asked for on the command line, after the standing
+        # instructions so it can override them.
+        task += f"\n\nAlso, specifically for this request:\n{req.extra.strip()}"
+
     rules = [
         "Each card tests ONE specific concept.",
         f"Answers are at most {style.max_answer_words} words.",
@@ -173,6 +180,42 @@ def _format_contract(card_type: str, wants_images: bool) -> str:
         image_field=', "image_query": "..."' if wants_images else ""
     ).strip()
     return shape + (_load("image_hint.txt").template.rstrip() if wants_images else "")
+
+
+def ad_hoc_request(profile: Profile, notes: list[Note], run_date: date, deck: str,
+                   topic: str = "", n: int = 0, extra: str = "") -> list[GenerationRequest]:
+    """One request, asked for by hand, instead of today's plan.
+
+    Everything the profile provides still applies — the learner, the style
+    rules, examples drawn from that deck, the do-not-duplicate list — because
+    what is being overridden is only *what to write about*, not how. A deck
+    that is not in the profile still works; it just has no deck-specific
+    instructions to add.
+    """
+    target = next((t for t in profile.decks if t.deck == deck), None)
+    if target is None:
+        target = DeckTarget(deck=deck, new_deck=True, topics=[topic] if topic else [])
+
+    rng = _rng(run_date, deck)
+    deck_notes = [n_ for n_ in notes if in_deck(n_.deck, deck)]
+    style_pool = deck_notes or [n_ for n_ in notes
+                                if any(in_deck(n_.deck, t.deck) for t in profile.decks)]
+    query = topic or deck
+    req = GenerationRequest(
+        request_id=hashlib.sha1(
+            f"{run_date}|{deck}|ad_hoc|{topic}|{extra}".encode()
+        ).hexdigest()[:12],
+        deck=deck,
+        card_type=target.card_type,
+        n=n or min(target.daily_quota or 5, CARDS_PER_TOPIC),
+        reason="topic" if topic else "gap",
+        topic=topic or deck.split("::")[-1],
+        style_examples=_style_examples(style_pool, profile.style.examples_per_prompt, rng),
+        avoid=nearest(query, notes, AVOID_LIMIT),
+        extra=extra,
+    )
+    req.prompt = render_prompt(req, profile, target)
+    return [req]
 
 
 # ------------------------------------------------------------ targeting
