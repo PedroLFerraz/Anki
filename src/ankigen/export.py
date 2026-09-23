@@ -18,6 +18,7 @@ from pathlib import Path
 import genanki
 
 from ankigen.card_types import CARD_TYPES
+from ankigen.dedup import NEAR_DUP
 from ankigen.verify import UNVERIFIED
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,10 @@ def build_package(run_date: date, cards: list[dict], profile=None,
         tags = ["ankigen", f"ankigen::run_{run_date}", f"ankigen::{c['request_reason']}"]
         if (c.get("verify_reason") or "").startswith(UNVERIFIED):
             tags.append("ankigen::unverified")
+        if (c.get("dup_reason") or "").startswith(NEAR_DUP):
+            # Close to something you already have, but not close enough to bin
+            # unseen. Search `tag:ankigen::near-dup` in Anki to judge them.
+            tags.append("ankigen::near-dup")
         deck.add_note(genanki.Note(
             model=models[c["card_type"]],
             fields=[str(values.get(f, "")) for f in spec_fields],

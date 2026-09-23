@@ -61,10 +61,15 @@ PROVIDERS: dict[str, dict] = {
         "base_url": "https://openrouter.ai/api/v1",
         "model": "nvidia/nemotron-3-super-120b-a12b:free",
         "embedding_model": "liquid/lfm-2.5-embedding-350m:free",
-        # Measured on real card pairs: reworded duplicates 0.92-0.98,
-        # same-topic non-duplicates 0.20-0.35, unrelated ~0.00. This model has a
-        # far lower floor than nomic, so 0.90 would miss real duplicates.
-        "embedding_threshold": 0.60,
+        # Re-measured on 47 real comparisons from four runs, which told a very
+        # different story from the synthetic pairs this was first set from.
+        # Genuine rewordings score 0.85-0.91 ("an IAM role is an assumable
+        # identity" vs "an IAM role is a permission set that can be assumed"),
+        # while cards that merely share a topic sit at 0.60-0.80 — the
+        # control plane's components score 0.62 against the node's, and the
+        # p-value misconception card 0.69 against "what is a p-value".
+        # At 0.60 the stage was deleting about half of every run's good cards.
+        "embedding_threshold": 0.85,
         "needs_key": True,
         "notes": "One key for chat and embeddings, both free. ~50 requests/day "
                  "until you have bought $10 of credit, then 1000.",
@@ -139,7 +144,10 @@ class Settings(BaseSettings):
 
     # Gemini
     google_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash-lite"
+    # Google retires model ids for new keys without warning: 2.5-flash now
+    # 404s with "no longer available to new users". `ankigen providers` will
+    # surface that, and the current list is at models.list().
+    gemini_model: str = "gemini-3.8-flash"
     embedding_model: str = "gemini-embedding-001"
 
     # Retained so existing .env files and the Ollama defaults keep working.

@@ -84,7 +84,9 @@ def test_embedding_cache_means_second_run_embeds_nothing(wh, modern_collection, 
     assert first["embedded_now"] > 0 and second["embedded_now"] == 0
 
 
-def test_embedding_outage_falls_back_to_fuzzy(wh, modern_collection, tmp_path, monkeypatch, cfg):
+def test_embedding_outage_fails_the_stage(wh, modern_collection, tmp_path, monkeypatch, cfg):
+    """Falling back silently once replaced a good partition with "no
+    duplicates found" and reported success."""
     ingest(wh, RUN_DATE, modern_collection, tmp_path / "raw")
     _seed(wh, [("u1", "DS::SQL", "What is a CTE?", "x"), ("u2", "DS::SQL", "Unrelated new idea", "y")])
 
@@ -92,9 +94,27 @@ def test_embedding_outage_falls_back_to_fuzzy(wh, modern_collection, tmp_path, m
         raise ConnectionError("ollama not running")
 
     monkeypatch.setattr(dedup.Embedder, "_embed_batch", down)
-    result = dedup.run(wh, RUN_DATE)
-    assert result["semantic"] is False and "ollama not running" in result["embedding_error"]
+    with pytest.raises(dedup.EmbeddingsUnavailable, match="ollama not running"):
+        dedup.run(wh, RUN_DATE)
+
+
+def test_fuzzy_only_matching_is_available_when_asked_for(wh, modern_collection, tmp_path, cfg):
+    ingest(wh, RUN_DATE, modern_collection, tmp_path / "raw")
+    _seed(wh, [("u1", "DS::SQL", "What is a CTE?", "x"), ("u2", "DS::SQL", "Unrelated new idea", "y")])
+    result = dedup.run(wh, RUN_DATE, use_embeddings=False)
+    assert result["semantic"] is False
     assert result["duplicates"] == 1                           # fuzzy still caught the CTE card
+
+
+def test_a_near_duplicate_is_kept_but_flagged(wh, modern_collection, tmp_path, fake_embeddings, cfg):
+    """Between "obviously the same" and "clearly different" the embedding model
+    cannot be trusted to decide, so the card ships with a tag instead."""
+    ingest(wh, RUN_DATE, modern_collection, tmp_path / "raw")
+    _seed(wh, [("u1", "DS::SQL", "What is a CTE in SQL?", "A named subquery.")])
+    dedup.run(wh, RUN_DATE)
+    [row] = wh.query("SELECT is_dup, reason FROM dedup_results WHERE run_date = ?", [RUN_DATE])
+    assert row["is_dup"] is False
+    assert row["reason"].startswith(dedup.NEAR_DUP)
 
 
 def test_verify_failures_are_not_deduped(wh, modern_collection, tmp_path, fake_embeddings, cfg):
@@ -132,6 +152,19 @@ def test_export_writes_inbox_package_with_tags(wh, tmp_path):
     [(guid, flds, tags)] = notes
     assert flds == "What is a CTE?\x1fA named subquery."
     assert "ankigen::weak_card" in tags and f"ankigen::run_{RUN_DATE}" in tags
+
+
+def test_near_duplicates_ship_tagged_for_review(wh, tmp_path):
+    """So a judgement call the model cannot make becomes one click in Anki
+    (`tag:ankigen::near-dup`) rather than a card you never see."""
+    _seed(wh, [("u1", "DS::SQL", "What is a CTE?", "A named subquery.")])
+    wh.replace_partition(
+        "dedup_results", RUN_DATE, ("run_date", "card_uid", "is_dup", "reason", "similarity"),
+        [(RUN_DATE, "u1", False, f"{dedup.NEAR_DUP} 0.86: What is a CTE in SQL?", 0.86)],
+    )
+    export.run(wh, RUN_DATE, tmp_path / "out")
+    tags = _notes_in(tmp_path / "out" / str(RUN_DATE) / f"ankigen_{RUN_DATE}.apkg")[1][0][2]
+    assert "ankigen::near-dup" in tags
 
 
 def test_export_guid_is_stable(wh, tmp_path):

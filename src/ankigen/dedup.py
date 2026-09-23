@@ -28,6 +28,16 @@ from ankigen.targeting import in_deck
 logger = logging.getLogger(__name__)
 
 FUZZY_THRESHOLD = 0.85
+# How far below the duplicate threshold a card is still worth flagging.
+# Measured on four runs of real cards with nomic-embed-text: genuine
+# rewordings score 0.90+, cards sharing only a topic sit at 0.65-0.85, and
+# the interesting judgement calls cluster in the 0.10 below the threshold.
+NEAR_DUP_MARGIN = 0.10
+NEAR_DUP = "near-dup"
+
+
+class EmbeddingsUnavailable(RuntimeError):
+    """Semantic dedup was asked for and could not run."""
 BATCH = 64
 _ARTICLES = ("the ", "a ", "an ", "la ", "le ", "el ", "der ", "die ", "das ")
 
@@ -142,6 +152,18 @@ def run(wh, run_date: date, use_embeddings: bool = True) -> dict:
         texts.update({content_hash(c["front"], c["back"]): f"{c['front']} {c['back']}" for c in candidates})
         vectors = embedder.vectors(texts)
 
+    if embedder and not embedder.available:
+        # Checked after embedding, not before: the provider fails mid-pass, as
+        # when a per-minute embedding quota ran out 64 texts in. Fuzzy matching
+        # alone catches rewordings of one sentence and nothing else, so falling
+        # back to it quietly reports "no duplicates" and overwrites good
+        # results with that claim. That happened, and it looked like success.
+        raise EmbeddingsUnavailable(
+            f"Embeddings are configured but unavailable ({embedder.error}). "
+            "Fix the provider, or pass use_embeddings=False to accept "
+            "fuzzy-only matching for this run."
+        )
+
     rows = []
     for deck in target_decks:
         pool = list(existing_by_deck[deck])
@@ -165,6 +187,13 @@ def run(wh, run_date: date, use_embeddings: bool = True) -> dict:
                     if best >= threshold:
                         is_dup = True
                         reason = f"semantic {best:.2f}: {pool_vecs[j][0]['front'][:80]}"
+                    elif best >= threshold - NEAR_DUP_MARGIN:
+                        # Measured on real pairs, this band holds both genuine
+                        # rewordings and cards that merely share a topic — the
+                        # control plane's components score 0.62 against the
+                        # node's. Dropping them silently loses good cards, so
+                        # they ship with a tag and you decide in one click.
+                        reason = f"near-dup {best:.2f}: {pool_vecs[j][0]['front'][:80]}"
 
             rows.append((run_date, card["card_uid"], is_dup, reason or None, best or None))
             if not is_dup:
@@ -180,6 +209,7 @@ def run(wh, run_date: date, use_embeddings: bool = True) -> dict:
         "checked": len(rows),
         "duplicates": dups,
         "kept": len(rows) - dups,
+        "near_dups": sum(1 for r in rows if not r[2] and (r[3] or "").startswith(NEAR_DUP)),
         "semantic": bool(embedder and embedder.available),
         "threshold": threshold,
         "embedded_now": embedder.embedded if embedder else 0,
