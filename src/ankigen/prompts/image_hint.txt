@@ -1,0 +1,6 @@
+
+For "image_query", apply one test to the card: could its answer be drawn as a
+labelled picture — boxes and arrows, a lifecycle, a plot, a physical object? If
+yes, write 2-5 words to search the web for, such as "kubernetes pod lifecycle
+diagram". If the answer is a command, a flag, a default, a definition or a
+rule, there is nothing to draw, so set the field to "".

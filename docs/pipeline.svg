@@ -1,0 +1,161 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 860" width="900" height="860" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <style>
+    .bg      { fill: #ffffff; }
+    .title   { fill: #0f172a; font-size: 22px; font-weight: 600; }
+    .sub     { fill: #64748b; font-size: 13px; }
+    .label   { fill: #0f172a; font-size: 15px; font-weight: 600; }
+    .note    { fill: #64748b; font-size: 11px; }
+    .mono    { fill: #334155; font-size: 11.5px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+    .whlabel { fill: #0f172a; font-size: 14px; font-weight: 600; }
+    .box     { fill: #eef2f7; stroke: #94a3b8; stroke-width: 1.5; }
+    .box-llm { fill: #fff7ed; stroke: #f59e0b; stroke-width: 1.5; }
+    .box-emb { fill: #ecfdf5; stroke: #10b981; stroke-width: 1.5; }
+    .box-out { fill: #faf5ff; stroke: #a855f7; stroke-width: 1.5; }
+    .ext     { fill: #ffffff; stroke: #94a3b8; stroke-width: 1.5; stroke-dasharray: 5 4; }
+    .wh      { fill: #f8fafc; stroke: #64748b; stroke-width: 1.5; }
+    .arrow   { stroke: #475569; stroke-width: 1.8; fill: none; }
+    .arrow-d { stroke: #94a3b8; stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+
+    @media (prefers-color-scheme: dark) {
+      .bg      { fill: #0d1117; }
+      .title, .label, .whlabel { fill: #e6edf3; }
+      .sub, .note { fill: #8b949e; }
+      .mono    { fill: #c9d1d9; }
+      .box     { fill: #161b22; stroke: #8b949e; }
+      .box-llm { fill: #2b1d06; stroke: #d29922; }
+      .box-emb { fill: #04260f; stroke: #2ea043; }
+      .box-out { fill: #221033; stroke: #bc8cff; }
+      .ext     { fill: #0d1117; stroke: #8b949e; }
+      .wh      { fill: #161b22; stroke: #8b949e; }
+      .arrow   { stroke: #8b949e; }
+      .arrow-d { stroke: #6e7681; }
+    }
+  </style>
+
+  <defs>
+    <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="head-d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="900" height="860"/>
+
+  <text class="title" x="40" y="44">AnkiGen — daily pipeline</text>
+  <text class="sub"   x="40" y="66">Each stage reads from the warehouse and replaces its own run_date partition, so any stage can be re-run safely.</text>
+
+  <!-- ================= warehouse (right) ================= -->
+  <rect class="wh" x="650" y="150" width="212" height="650" rx="10"/>
+  <text class="whlabel" x="664" y="176">DuckDB warehouse</text>
+  <text class="note"    x="664" y="193">one partition per run_date</text>
+
+  <text class="mono" x="664" y="207">raw_notes</text>
+  <text class="mono" x="664" y="222">raw_revlog</text>
+  <text class="mono" x="664" y="305">requests</text>
+  <text class="mono" x="664" y="395">generated_cards</text>
+  <text class="mono" x="664" y="485">verified_cards</text>
+  <text class="mono" x="664" y="575">dedup_results</text>
+  <text class="mono" x="664" y="590">embedding_cache</text>
+  <text class="mono" x="664" y="665">card_outcomes</text>
+  <text class="note" x="664" y="680">(view: kept / dropped)</text>
+  <text class="mono" x="664" y="755">pipeline_runs</text>
+
+  <!-- ================= stages (centre) ================= -->
+  <!-- 1 ingest -->
+  <rect class="box" x="340" y="180" width="260" height="62" rx="8"/>
+  <text class="label" x="358" y="207">1 · ingest</text>
+  <text class="note"  x="358" y="227">fetch — snapshot the collection</text>
+
+  <!-- 2 target -->
+  <rect class="box" x="340" y="270" width="260" height="62" rx="8"/>
+  <text class="label" x="358" y="297">2 · target</text>
+  <text class="note"  x="358" y="317">decode — plan + build prompts</text>
+
+  <!-- 3 generate -->
+  <rect class="box-llm" x="340" y="360" width="260" height="62" rx="8"/>
+  <text class="label" x="358" y="387">3 · generate</text>
+  <text class="note"  x="358" y="407">execute — the model writes cards</text>
+
+  <!-- 4 verify -->
+  <rect class="box-llm" x="340" y="450" width="260" height="62" rx="8"/>
+  <text class="label" x="358" y="477">4 · verify</text>
+  <text class="note"  x="358" y="497">fault check — fact-check each card</text>
+
+  <!-- 5 dedup -->
+  <rect class="box-emb" x="340" y="540" width="260" height="62" rx="8"/>
+  <text class="label" x="358" y="567">5 · dedup</text>
+  <text class="note"  x="358" y="587">hazard check — fuzzy + embeddings</text>
+
+  <!-- 6 export -->
+  <rect class="box-out" x="340" y="630" width="260" height="62" rx="8"/>
+  <text class="label" x="358" y="657">6 · export</text>
+  <text class="note"  x="358" y="677">write back — .apkg + Parquet</text>
+
+  <!-- 7 report -->
+  <rect class="box-out" x="340" y="720" width="260" height="62" rx="8"/>
+  <text class="label" x="358" y="747">7 · report</text>
+  <text class="note"  x="358" y="767">counters — timings, drops, tokens</text>
+
+  <!-- stage-to-stage arrows -->
+  <path class="arrow" d="M470,242 L470,270" marker-end="url(#head)"/>
+  <path class="arrow" d="M470,332 L470,360" marker-end="url(#head)"/>
+  <path class="arrow" d="M470,422 L470,450" marker-end="url(#head)"/>
+  <path class="arrow" d="M470,512 L470,540" marker-end="url(#head)"/>
+  <path class="arrow" d="M470,602 L470,630" marker-end="url(#head)"/>
+  <path class="arrow" d="M470,692 L470,720" marker-end="url(#head)"/>
+
+  <!-- stage <-> warehouse -->
+  <path class="arrow" d="M600,211 L650,211" marker-end="url(#head)" marker-start="url(#head)"/>
+  <path class="arrow" d="M600,301 L650,301" marker-end="url(#head)" marker-start="url(#head)"/>
+  <path class="arrow" d="M600,391 L650,391" marker-end="url(#head)" marker-start="url(#head)"/>
+  <path class="arrow" d="M600,481 L650,481" marker-end="url(#head)" marker-start="url(#head)"/>
+  <path class="arrow" d="M600,571 L650,571" marker-end="url(#head)" marker-start="url(#head)"/>
+  <path class="arrow" d="M600,661 L650,661" marker-end="url(#head)" marker-start="url(#head)"/>
+  <path class="arrow" d="M600,751 L650,751" marker-end="url(#head)" marker-start="url(#head)"/>
+
+  <!-- ================= inputs (left) ================= -->
+  <rect class="ext" x="48" y="183" width="250" height="56" rx="8"/>
+  <text class="label" x="64" y="207">Anki collection</text>
+  <text class="note"  x="64" y="225">collection.anki2 — read-only snapshot</text>
+  <path class="arrow" d="M298,211 L340,211" marker-end="url(#head)"/>
+
+  <rect class="ext" x="48" y="273" width="250" height="56" rx="8"/>
+  <text class="label" x="64" y="297">Prompt profile</text>
+  <text class="note"  x="64" y="315">profiles/default.yaml</text>
+  <path class="arrow" d="M298,301 L340,301" marker-end="url(#head)"/>
+
+  <rect class="ext" x="48" y="408" width="250" height="56" rx="8"/>
+  <text class="label" x="64" y="432">LLM provider</text>
+  <text class="note"  x="64" y="450">Groq / OpenRouter / Gemini / Ollama…</text>
+  <path class="arrow-d" d="M298,424 L340,391" marker-end="url(#head-d)" marker-start="url(#head-d)"/>
+  <path class="arrow-d" d="M298,448 L340,481" marker-end="url(#head-d)" marker-start="url(#head-d)"/>
+
+  <rect class="ext" x="48" y="543" width="250" height="56" rx="8"/>
+  <text class="label" x="64" y="567">Embedding provider</text>
+  <text class="note"  x="64" y="585">Ollama (local) or OpenRouter — cached</text>
+  <path class="arrow-d" d="M298,571 L340,571" marker-end="url(#head-d)" marker-start="url(#head-d)"/>
+
+  <!-- ================= outputs (left, lower) ================= -->
+  <rect class="box-out" x="48" y="633" width="250" height="56" rx="8"/>
+  <text class="label" x="64" y="657">out/&lt;date&gt;/*.apkg</text>
+  <text class="note"  x="64" y="675">import into Anki → AnkiGen Inbox</text>
+  <path class="arrow" d="M340,661 L298,661" marker-end="url(#head)"/>
+
+  <rect class="box-out" x="48" y="723" width="250" height="56" rx="8"/>
+  <text class="label" x="64" y="747">run_report.json</text>
+  <text class="note"  x="64" y="765">+ curated/ Parquet partitions</text>
+  <path class="arrow" d="M340,751 L298,751" marker-end="url(#head)"/>
+
+  <!-- ================= legend ================= -->
+  <rect class="ext"     x="48"  y="815" width="14" height="14" rx="3"/>
+  <text class="note"    x="68"  y="827">external</text>
+  <rect class="box-llm" x="140" y="815" width="14" height="14" rx="3"/>
+  <text class="note"    x="160" y="827">LLM call</text>
+  <rect class="box-emb" x="232" y="815" width="14" height="14" rx="3"/>
+  <text class="note"    x="252" y="827">embeddings</text>
+  <rect class="box-out" x="340" y="815" width="14" height="14" rx="3"/>
+  <text class="note"    x="360" y="827">produces files</text>
+  <text class="note"    x="470" y="827">↔ two-way arrow = reads and writes the warehouse</text>
+</svg>

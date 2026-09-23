@@ -1,0 +1,60 @@
+# Deliberately small: Airflow's own compose runs six services. A personal daily
+# DAG needs the scheduler, the API server and a metadata database, so this runs
+# `airflow standalone` (scheduler + api-server + dag-processor in one) next to
+# Postgres. Two containers, one image to pull.
+name: ankigen-airflow
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  airflow:
+    build:
+      context: ../..
+      dockerfile: infra/airflow/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      # Dev-only convenience: no login prompt on a local UI.
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
+
+      # --- AnkiGen ---
+      # The collection is mounted read-only; the pipeline only ever snapshots it.
+      ANKI_COLLECTION_PATH: /opt/ankigen/anki/collection.anki2
+      ANKIGEN_PROFILE: /opt/ankigen/profiles/default.yaml
+      DATA_DIR: /opt/ankigen/data
+      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+      LLM_API_KEY: ${LLM_API_KEY:?set LLM_API_KEY in the repo .env}
+      ALLOW_PAID_MODELS: ${ALLOW_PAID_MODELS:-false}
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - airflow-logs:/opt/airflow/logs
+      - ../../data:/opt/ankigen/data
+      - ../../profiles:/opt/ankigen/profiles:ro
+      # Whole Anki profile folder, so the -wal sidecar comes too.
+      - ${ANKI_PROFILE_DIR:?set ANKI_PROFILE_DIR in the repo .env}:/opt/ankigen/anki:ro
+    ports:
+      - "8080:8080"
+    command: airflow standalone
+    restart: unless-stopped
+
+volumes:
+  postgres-db:
+  airflow-logs:

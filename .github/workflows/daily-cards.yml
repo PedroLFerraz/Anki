@@ -1,0 +1,113 @@
+# The daily run, on GitHub's machines rather than yours.
+#
+# Each run gets a clean Linux VM that is destroyed afterwards, so everything
+# the pipeline needs is either fetched here or cached:
+#
+#   code        cloned from this repo
+#   collection  committed at collection/collection.anki2, refreshed with
+#               `ankigen sync-collection` — the runner cannot see your machine
+#   embeddings  computed in-process by fastembed; there is no Ollama here
+#   warehouse   restored from the Actions cache, saved again at the end
+#   the cards   uploaded as a workflow artifact for you to download
+#
+# Free on public repositories. Note that GitHub disables scheduled workflows
+# after 60 days without a commit, so a dormant repo stops running silently.
+name: daily cards
+
+on:
+  schedule:
+    - cron: "0 9 * * *"      # 09:00 UTC = 06:00 America/Sao_Paulo
+  workflow_dispatch:
+    inputs:
+      run_date:
+        description: "Date to generate for (YYYY-MM-DD). Blank means today."
+        required: false
+        type: string
+
+concurrency:                  # DuckDB takes one writer, and so does the cache
+  group: daily-cards
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the setup is complete
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          if [ -z "$GOOGLE_API_KEY" ]; then
+            echo "::error::Missing repository secret GOOGLE_API_KEY."
+            echo "See docs/GITHUB_ACTIONS.md."
+            exit 1
+          fi
+          if [ ! -f collection/collection.anki2 ]; then
+            echo "::error::No collection committed at collection/collection.anki2."
+            echo "Run 'ankigen sync-collection' locally, then commit and push it."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install .
+
+      # The warehouse holds every past run: what was generated, what was kept,
+      # and the embedding cache. Losing it is survivable — the next run rebuilds
+      # from the collection — but it would forget which cards it already made.
+      - name: Restore the warehouse
+        uses: actions/cache/restore@v4
+        id: warehouse
+        with:
+          path: data/warehouse.duckdb
+          key: warehouse-${{ github.run_id }}
+          restore-keys: warehouse-
+
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/fastembed
+          key: fastembed-bge-small-en-v1.5
+
+      - name: Run the pipeline
+        env:
+          ANKI_COLLECTION_PATH: collection/collection.anki2
+          ANKIGEN_PROFILE: profiles/default.yaml
+          DATA_DIR: data
+          EMBEDDING_PROVIDER: fastembed
+          LLM_PROVIDER: gemini
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
+          # A checker that is not the writer catches more, and free tiers
+          # meter per model, so this also doubles the daily allowance.
+          VERIFY_MODEL: ${{ vars.VERIFY_MODEL || 'gemini-3.5-flash' }}
+        run: |
+          if [ -n "${{ inputs.run_date }}" ]; then
+            python -m ankigen run --date "${{ inputs.run_date }}"
+          else
+            python -m ankigen run
+          fi
+
+      - name: Save the warehouse
+        if: always()            # a failed generate still advanced ingest
+        uses: actions/cache/save@v4
+        with:
+          path: data/warehouse.duckdb
+          key: warehouse-${{ github.run_id }}
+
+      - name: Upload the cards
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cards-${{ inputs.run_date || 'today' }}
+          path: |
+            data/out/**/*.apkg
+            data/out/**/run_report.json
+          if-no-files-found: warn
+          retention-days: 90

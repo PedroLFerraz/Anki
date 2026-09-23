@@ -1,245 +1,144 @@
-# Anki Flashcard Generator
+# AnkiGen
 
-AI-powered Anki flashcard generator using a local LLM (Ollama). Generate, review, and export flashcards to `.apkg` from the command line — no Anki desktop needed during generation.
+A daily batch pipeline that reads your Anki collection and writes new cards
+that fit it. The cards match the phrasing of cards you already study, avoid what
+you already know, re-teach what you keep forgetting, and are fact-checked before
+they reach you. You steer it with one YAML profile.
 
-## Features
+It is also built the way a data platform team would build it: idempotent stages
+keyed by date, a layered DuckDB warehouse, and output as Parquet. That makes it
+ready to schedule with Airflow, containerise, and move to S3 and Kubernetes. See
+the [roadmap](#roadmap).
 
-- 4 card types: basic Q&A, detailed (summary + explanation + image), visual (image front), and cloze
-- DuckDuckGo image search with automatic download for detailed and visual cards
-- Two-tier duplicate detection: fuzzy text matching + semantic embeddings
-- Import existing `.apkg` decks as dedup context
-- Export to `.apkg` — import directly into Anki via File > Import
-- Works offline with Ollama (default) or with Gemini API (optional)
+```
+Anki collection ──snapshot──▶ ingest ─▶ target ─▶ generate ─▶ verify ─▶ dedup ─▶ export ─▶ report
+ (never touched)                │         │          │          │         │         │
+                                └────────── DuckDB warehouse, one partition per run_date ─────┘
+                                                                                    │
+                                          data/out/<date>/ankigen_<date>.apkg ◀──────┤
+                                          data/curated/<table>/run_date=<date>/*.parquet
+```
 
-## Quick Start
+## Quick start
 
 ```bash
-# 1. Install dependencies
-pip install -r requirements.txt
-
-# 2. Install and start Ollama (https://ollama.com)
-ollama pull phi4-mini
-ollama pull nomic-embed-text
-
-# 3. Generate cards
-python cli.py generate "Python decorators" -n 5
+pip install .                      # installs the `ankigen` command
+cp .env.example .env               # set LLM_PROVIDER / LLM_API_KEY (Groq is free)
+ankigen decks                      # see your decks, to write the profile
+ankigen validate                   # check profiles/default.yaml against them
+ankigen plan                       # what today's run would generate + the exact prompt
+ankigen run                        # do it
+ankigen report                     # what was kept, dropped, and why
 ```
 
-Ollama must be running (`ollama serve`) before generating cards.
+Import `data/out/<date>/ankigen_<date>.apkg` into Anki with File > Import. New
+cards land in **`AnkiGen Inbox::<deck>`**, tagged `ankigen::run_<date>`. Study
+them there, delete what you don't want, and move the rest into the real deck.
+Re-importing the same day's package updates those notes instead of duplicating
+them.
 
-## Card Types
+Close Anki desktop before running. While it's open, Anki holds the collection
+exclusively.
 
-| Type | Front | Back | Images |
-|------|-------|------|--------|
-| `basic` | Question | Answer | No |
-| `detailed` | Question | Summary + full explanation + image | Yes (optional) |
-| `visual` | Image | Title + explanation | Yes (required) |
-| `cloze` | Sentence with `{{c1::blank}}` | Full sentence revealed | No |
+## What each stage does
 
-```bash
-python cli.py generate "Neural networks" -n 5 --type basic
-python cli.py generate "Neural networks" -n 5 --type detailed
-python cli.py generate "Neural networks" -n 5 --type visual
-```
-
-Visual cards with no image found are automatically discarded (DuckDuckGo rate limits can cause this — retry later if needed).
-
-## Commands
-
-### `generate` — Create new cards
-
-```bash
-python cli.py generate "Topic" -n 5
-python cli.py generate "Topic" -n 3 --type detailed
-python cli.py generate "Topic" -n 5 --deck-name "My Deck"
-python cli.py generate "Topic" -n 5 --no-embeddings   # skip embedding-based dedup
-```
-
-After generation you are prompted to accept all, pick individually, or discard. Accepted cards can be exported immediately.
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-n`, `--count` | 5 | Number of cards to generate |
-| `--type` | `basic` | Card type: `basic`, `detailed`, `visual` |
-| `-d`, `--deck-name` | `Flashcards` | Deck name written into the `.apkg` |
-| `--no-embeddings` | off | Use fuzzy matching only, skip embedding calls |
-
-### `list` — View cards in the database
-
-```bash
-python cli.py list
-python cli.py list --topic "Neural networks"
-python cli.py list --status ACCEPTED
-python cli.py list --status CONTEXT        # show imported context cards
-```
-
-Card statuses: `GENERATED`, `ACCEPTED`, `REJECTED`, `DUPLICATE`, `EXPORTED`, `CONTEXT`.
-
-### `export` — Export accepted cards to `.apkg`
-
-```bash
-python cli.py export
-python cli.py export --deck-name "My Deck"
-```
-
-Output is written to `data/exports/`. Cards are marked `EXPORTED` after a successful export.
-
-### `clear` — Remove cards from the database
-
-```bash
-python cli.py clear                              # removes GENERATED, REJECTED, DUPLICATE
-python cli.py clear --status REJECTED            # specific status only
-python cli.py clear --topic "Neural networks"    # scoped to a topic
-python cli.py clear --all                        # removes everything including ACCEPTED and CONTEXT
-```
-
-### `import-context` — Load an existing deck for dedup
-
-```bash
-python cli.py import-context path/to/deck.apkg
-python cli.py import-context path/to/deck.apkg --clear-existing
-```
-
-Cards from the imported deck are stored with status `CONTEXT` and used during duplicate detection. They are never exported.
-
-### `clear-context` — Remove imported context cards
-
-```bash
-python cli.py clear-context
-```
-
-### `providers` — Show LLM providers and test the configured one
-
-```bash
-python cli.py providers
-```
-
-Lists the available presets, prints the resolved generation and embedding
-configuration (API keys masked), and probes the endpoint. Exits non-zero if the
-provider is unreachable.
-
-## Configuration
-
-Copy `.env.example` to `.env` and edit as needed. All settings have defaults that work with Ollama out of the box.
-
-```bash
-cp .env.example .env
-```
-
-### Recommended setup (free)
-
-**Groq for generation, local Ollama for embeddings.** Groq serves
-`openai/gpt-oss-120b` free with no credit card — a much stronger model than
-`phi4-mini`, and card quality is mostly a function of model quality. It has no
-embeddings endpoint, so those fall back to Ollama automatically, where they are
-free and unlimited.
-
-1. Get a key at [console.groq.com/keys](https://console.groq.com/keys)
-2. In `.env`:
-
-```
-LLM_PROVIDER=groq
-LLM_API_KEY=your_key_here
-```
-
-3. Confirm it works:
-
-```bash
-python cli.py providers
-```
-
-That prints the resolved configuration and probes the endpoint, so a bad key or
-a retired model ID shows up immediately rather than mid-generation.
-
-### All presets
-
-Every provider except Gemini speaks the OpenAI chat-completions protocol.
-
-| Preset | Key from | Embeddings | Notes |
+| Stage | Reads | Writes | Notes |
 |---|---|---|---|
-| `ollama` | — | Yes | Local, unlimited, offline. The default. |
-| `groq` | [console.groq.com](https://console.groq.com/keys) | No | Recommended. `openai/gpt-oss-120b`, very fast. |
-| `nvidia` | [build.nvidia.com](https://build.nvidia.com) | Yes | Serves both chat and embeddings. |
-| `openrouter` | [openrouter.ai](https://openrouter.ai/keys) | No | Many free models, low per-model daily caps. |
-| `sambanova` | [cloud.sambanova.ai](https://cloud.sambanova.ai) | No | Daily token budget, not a request cap. |
-| `mistral` | [console.mistral.ai](https://console.mistral.ai) | Yes | Free tier is monthly credits. |
-| `gemini` | [aistudio.google.com](https://aistudio.google.com/apikey) | Yes | Uses google-genai, not the OpenAI protocol. |
+| **ingest** | your `collection.anki2` | `raw_notes` (daily snapshot), `raw_revlog` (incremental) | Snapshots through SQLite's backup API, so reviews still in the `-wal` file are included. A plain file copy misses them, and there's a test proving it. Handles both schema generations and any note type, from `Front/Back` to `Frente/Verso`. |
+| **target** | `raw_notes`, profile | `requests` (with the rendered prompt) | Deterministic. The same date always produces the same plan, and topics and weak cards rotate day to day. No LLM calls, so `plan` is instant. |
+| **generate** | `requests` | `generated_cards` | The only non-deterministic stage. If one request fails, the rest of the run still goes ahead. |
+| **verify** | `generated_cards` | `verified_cards` | A second LLM pass fact-checks each card. If the checker itself is down, cards pass through tagged `ankigen::unverified` instead of being dropped. |
+| **dedup** | the above + `raw_notes` + previous runs | `dedup_results` | Fuzzy wording match, plus embedding similarity to catch rephrasings. Embeddings are cached by content hash, and only targeted decks are embedded. |
+| **export** | `card_outcomes` view | `.apkg`, Parquet | Stable note GUIDs and stable deck and note-type IDs. |
+| **report** | `pipeline_runs` + all of the above | `run_report.json` | Per-stage timings, drops with reasons, and token usage. |
 
-Free-tier limits and model IDs move constantly — Groq had already retired
-`llama-3.3-70b-versatile` by the time this table was written. Treat it as a
-starting point, verify with `python cli.py providers`, and override `LLM_MODEL`
-if a preset has gone stale.
-[awesome-free-llm-apis](https://github.com/mnfst/awesome-free-llm-apis) tracks
-current numbers.
+Every stage replaces its own `run_date` partition in a single transaction.
+Re-running any stage for any date is therefore safe. Retrying `dedup` or
+`export` never calls the model and never changes which cards exist.
 
-Any other OpenAI-compatible endpoint works without a preset:
-
-```
-LLM_PROVIDER=custom
-LLM_BASE_URL=https://your-endpoint/v1
-LLM_MODEL=some-model
-LLM_API_KEY=your_key_here
+```bash
+ankigen run --date 2026-09-22 --stage dedup --stage export --stage report
 ```
 
-Models that reject `response_format` are detected on first use and fall back to
-extracting JSON from the reply text, so JSON-mode support is not a requirement.
+## The profile
 
-### Embeddings are configured separately
+`profiles/default.yaml` is where personalisation lives:
 
-Most free chat APIs serve no embedding endpoint, so `EMBEDDING_PROVIDER` is its
-own setting. Left empty it derives automatically: the chat provider if it
-supports embeddings, otherwise local Ollama.
-
-That makes the practical setup a hosted model for generation plus Ollama for
-embeddings — generation gets a decent model, dedup stays free and unlimited:
-
-```
-LLM_PROVIDER=groq
-LLM_API_KEY=your_key_here
-# EMBEDDING_PROVIDER left empty -> local Ollama
-```
-
-With no embeddings reachable at all, generation still works and dedup falls back
-to fuzzy text matching. That catches near-identical wording but not rephrasings,
-and the first failure logs a one-time warning.
-
-## Duplicate Detection
-
-Cards are checked against both imported context and cards generated in the current session.
-
-1. **Fuzzy matching** — always active, catches near-identical questions ("What is X?" vs "Define X")
-2. **Semantic embeddings** — enabled by default, catches conceptually similar questions across different wording. Disable with `--no-embeddings` if you want faster generation without embedding calls.
-
-## Project Structure
-
-```
-cli.py                   main CLI entry point — all commands
-.env.example             template for environment configuration
-
-core/
-  agents.py              LLM prompt construction and card generation per type
-  card_types.py          card type definitions: fields, templates, CSS, genanki model IDs
-  apkg_import.py         parse existing .apkg files for context import
-  embeddings.py          semantic duplicate detection using nomic-embed-text or Gemini
-  images.py              DuckDuckGo image search and download with rate-limit backoff
-  config.py              settings loaded from .env via pydantic-settings
-
-storage/
-  database.py            SQLite schema and migrations
-  repository.py          all CRUD operations — never write raw SQL elsewhere
-
-export/
-  genanki_export.py      build genanki models and write .apkg files
-
-data/                    runtime directory (gitignored)
-  anki_generator.db      SQLite database
-  exports/               generated .apkg files
-  media/                 downloaded images
+```yaml
+learner:
+  level: "working data scientist, moving into data platform"
+  goals: ["Interview-ready on core data science: statistics, SQL, ML"]
+style:
+  max_answer_words: 40
+  examples_per_prompt: 4          # few-shot examples drawn from YOUR cards
+  rules: ["When a concept has a common misconception, target it."]
+weak_cards: {min_lapses: 2, max_ease: 2100, max_per_deck: 1}
+global_quota: 15
+decks:
+  - deck: DS::SQL                 # existing deck: extend it in your own voice
+    daily_quota: 3
+    topics: [window functions, NULL semantics]
+    instructions: Use small SQL snippets in backticks.
+  - deck: Data Platform::Airflow  # a subject you don't have yet
+    new_deck: true
+    topics: [idempotent tasks and safe backfills]
 ```
 
-## Requirements
+Every generation prompt is built from:
 
-- Python 3.10+
-- [Ollama](https://ollama.com) with `phi4-mini` and `nomic-embed-text` (default, free)
-- Or a Gemini API key (alternative provider)
-- No Anki desktop needed — only for the final File > Import step
+- your learner profile and style rules;
+- a few real cards from that deck as examples, so new cards match your phrasing and length;
+- the existing cards most related to today's topic, as a do-not-duplicate list (unrelated cards are left out to save tokens);
+- for weak cards, the card you keep failing, with an instruction to approach it from a different angle rather than rephrase it.
+
+`ankigen plan --prompts 3` prints exactly what will be sent.
+
+## LLM providers
+
+Any OpenAI-compatible endpoint works. Set `LLM_PROVIDER` to a preset (`groq`,
+`openrouter`, `nvidia`, `sambanova`, `mistral`, `ollama`) or to `gemini`.
+Two setups are worth knowing:
+
+| | Generation | Embeddings | Free limits |
+|---|---|---|---|
+| **Simplest** | `openrouter` | `openrouter` (same key) | ~50 requests/day, 1000 once you have bought $10 of credit |
+| **Highest limits** | `groq` | local `ollama` | 1000 requests/day; embeddings unlimited and offline |
+
+```
+LLM_PROVIDER=openrouter      # one key does chat and embeddings
+LLM_API_KEY=sk-or-...
+```
+
+Groq has no embeddings endpoint, so with `groq` the embedding step falls back to
+local Ollama on its own (`ollama pull nomic-embed-text`). OpenRouter does have
+one, and a free model, which is why it needs nothing local — useful once the
+pipeline runs in a container. A run costs about 14 requests, so either free tier
+covers a day comfortably. If no embedding provider is reachable at all, dedup
+degrades to fuzzy matching and says so in the report.
+
+`ankigen providers` shows the resolved configuration and tests the connection.
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+python -m pytest
+```
+
+The tests build real SQLite collections in both Anki schemas and replace the LLM
+and embedding provider with deterministic fakes, so they run offline in a few
+seconds.
+
+> **Non-ASCII paths:** an editable install can't be built from a directory whose
+> path contains characters outside the system codepage, because setuptools
+> writes a `.pth` file in that encoding. pytest is configured with
+> `pythonpath = ["src"]`, and `python -m ankigen` works with `PYTHONPATH=src`.
+
+## Roadmap
+
+1. ✅ **Core pipeline**: personalised, verified, deduplicated daily cards.
+2. **Docker**: multi-stage image; the collection and profile mounted read-only.
+3. **Airflow**: `ankigen_daily` DAG, one task per stage, `catchup` for backfills.
+4. **AWS free tier**: S3 `raw/`, `curated/` and `gold/` layers via Terraform, and a least-privilege IAM role.
+5. **Kubernetes**: `CronJob` on `kind`, then `KubernetesPodOperator` per stage.
+6. Later: PDF ingestion as a second source, hosted deployment, and the Android client (see branch `archive/android-web`).

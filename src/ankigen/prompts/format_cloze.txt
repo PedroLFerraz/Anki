@@ -1,0 +1,6 @@
+Each card is ONE complete factual sentence with the single most important term
+hidden as {{c1::term}} (exactly two braces on each side), plus an optional short
+hint in "extra".
+
+Respond with JSON only, shaped like this:
+{"cards": [{"text": "The {{c1::term}} does ...", "extra": "optional hint"$image_field}]}
