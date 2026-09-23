@@ -16,7 +16,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable
 
-from ankigen import dedup, export, generate, images, ingest, targeting, verify
+from ankigen import dedup, export, generate, images, ingest, llm, targeting, verify
 from ankigen.config import Settings, settings
 from ankigen.profile import Profile, load_profile
 from ankigen.warehouse import Warehouse
@@ -150,4 +150,8 @@ def run(ctx: Context, run_date: date, stages: list[str] | None = None, dry_run: 
     unknown = [s for s in names if s not in STAGES]
     if unknown:
         raise ValueError(f"Unknown stage(s): {unknown}. Choose from {list(STAGES)}.")
+    # Before ingest, not after it: a provider that cannot work at all should
+    # say so in a second rather than once per request, ninety seconds in.
+    if {"generate", "verify"} & set(names):
+        llm.preflight()
     return {name: run_stage(ctx, name, run_date) for name in names}
