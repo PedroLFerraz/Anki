@@ -175,7 +175,7 @@ def test_width_reported_as_a_string_is_still_usable(ddg):
 
 
 def test_one_failing_job_does_not_sink_the_batch(tmp_path, monkeypatch):
-    def flaky(uid, query, media_dir):
+    def flaky(uid, query, media_dir, card="", verifier=None):
         if query == "bad":
             raise RuntimeError("boom")
         return images.ImageResult(uid, query, filename="ok.jpg", source="duckduckgo")
@@ -328,11 +328,13 @@ def test_images_are_only_fetched_for_surviving_cards(wh, tmp_path, monkeypatch, 
 
     asked = []
     monkeypatch.setattr(images, "fetch_many",
-                        lambda jobs, media_dir, workers=3: (asked.extend(jobs), [
-                            images.ImageResult(u, q, filename="x.jpg", source="duckduckgo") for u, q in jobs])[1])
+                        lambda jobs, media_dir, workers=3, verifier=None: (asked.extend(jobs), [
+                            images.ImageResult(j[0], j[1], filename="x.jpg", source="duckduckgo")
+                            for j in jobs])[1])
     ctx = pipeline.Context(cfg, profile, wh)
     result = pipeline.stage_images(ctx, RUN_DATE)
-    assert [uid for uid, _ in asked] == ["keep"]
+    assert [j[0] for j in asked] == ["keep"]
+    assert asked[0][2].startswith("Kept?")          # the card text goes along, to check the picture against
     assert result["found"] == 1 and result["by_source"]["duckduckgo"] == 1
 
 
@@ -350,6 +352,62 @@ def test_images_stage_skipped_for_decks_that_opt_out(wh, tmp_path, monkeypatch, 
     profile.decks[0].images = False        # DS::SQL opts out
     asked = []
     monkeypatch.setattr(images, "fetch_many",
-                        lambda jobs, media_dir, workers=3: (asked.extend(jobs), [])[1])
+                        lambda jobs, media_dir, workers=3, verifier=None: (asked.extend(jobs), [])[1])
     result = pipeline.stage_images(pipeline.Context(cfg, profile, wh), RUN_DATE)
     assert result["wanted"] == 0 and asked == []       # nothing requested, nothing downloaded
+
+
+# ---------------------------------------------------------------- looking at the picture
+
+def test_an_image_the_model_rejects_is_not_used(tmp_path, monkeypatch):
+    """A card about S3's flat namespace was illustrated with a stock photo of a
+    basketball player, from a page whose title matched the query exactly."""
+    monkeypatch.setattr(images, "search_duckduckgo",
+                        lambda q, limit=5, attempts=6: ["https://seo.farm/a.png", "https://ok/b.png"])
+    monkeypatch.setattr(images, "search_wikimedia", lambda q, limit=5: [])
+    monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
+
+    looked = []
+
+    def verifier(blob, card, query):
+        looked.append(query)
+        return (len(looked) > 1, "a basketball player" if len(looked) == 1 else "a diagram")
+
+    result = images.fetch("u1", "s3 flat namespace", tmp_path, card="What is a flat namespace?",
+                          verifier=verifier)
+    assert result.found and result.detail == "shows a diagram"
+    assert len(looked) == 2                       # the first candidate was thrown away
+    assert len(list(tmp_path.glob("*.jpg"))) == 1  # and its file with it
+
+
+def test_giving_up_rather_than_checking_the_whole_result_page(tmp_path, monkeypatch):
+    """Each look costs a request on a metered free tier."""
+    monkeypatch.setattr(images, "search_duckduckgo",
+                        lambda q, limit=5, attempts=6: [f"https://x/{i}.png" for i in range(9)])
+    monkeypatch.setattr(images, "search_wikimedia", lambda q, limit=5: [])
+    monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
+    looks = []
+
+    result = images.fetch("u1", "kubernetes pods", tmp_path, card="c",
+                          verifier=lambda b, c, q: (looks.append(1), (False, "junk"))[1],
+                          max_checks=3)
+    assert not result.found and "first 3 checked" in result.detail
+    assert len(looks) == 3
+    assert list(tmp_path.glob("*.jpg")) == []      # nothing left behind
+
+
+def test_a_checker_outage_keeps_the_image_and_says_it_is_unchecked(tmp_path, monkeypatch):
+    monkeypatch.setattr(images, "search_duckduckgo", lambda q, limit=5, attempts=6: ["https://x/a.png"])
+    monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
+
+    def down(blob, card, query):
+        raise RuntimeError("out of quota")
+
+    result = images.fetch("u1", "kubernetes pods", tmp_path, card="c", verifier=down)
+    assert result.found and result.detail.startswith(images.UNCHECKED)
+
+
+def test_stock_libraries_and_scraper_buckets_are_skipped():
+    assert images._looks_like_junk("https://media.gettyimages.com/photos/x.jpg")
+    assert images._looks_like_junk("https://storage.googleapis.com/djiuedjsglnrce/flat-file.jpg")
+    assert not images._looks_like_junk("https://docs.aws.amazon.com/images/s3-namespace.png")

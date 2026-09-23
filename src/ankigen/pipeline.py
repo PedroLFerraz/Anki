@@ -84,14 +84,23 @@ def stage_images(ctx: Context, run_date: date) -> dict:
     """Illustrate the cards that survived. Running after dedup means no image is
     ever downloaded for a card that is about to be thrown away."""
     rows = ctx.wh.query(
-        """SELECT card_uid, deck, image_query FROM card_outcomes
+        """SELECT card_uid, deck, image_query, front, back FROM card_outcomes
            WHERE run_date = ? AND outcome = 'kept' AND COALESCE(image_query, '') != ''
            ORDER BY card_uid""",
         [run_date],
     )
-    jobs = [(r["card_uid"], r["image_query"]) for r in rows
-            if ctx.profile.wants_images(r["deck"])]
-    results = images.fetch_many(jobs, ctx.settings.data_path / "media")
+    jobs = [(r["card_uid"], r["image_query"], f"{r['front']} — {r['back'] or ''}")
+            for r in rows if ctx.profile.wants_images(r["deck"])]
+    # Someone has to look at the picture: a page whose title matches the query
+    # routinely carries an image that has nothing to do with it. The checker's
+    # models do it, not the writer's, so looking at pictures does not eat the
+    # allowance that writes the cards.
+    checker = ctx.settings.resolve_verify()
+    verifier = (
+        (lambda blob, card, query: llm.check_image(blob, card, query, cfg=checker))
+        if ctx.profile.verify_images else None
+    )
+    results = images.fetch_many(jobs, ctx.settings.data_path / "media", verifier=verifier)
 
     ctx.wh.replace_partition(
         "card_images", run_date,

@@ -31,6 +31,9 @@ MIN_SOURCE_WIDTH = 300
 TIMEOUT = 15
 # Roughly three minutes of patience per query, spread over six tries.
 DDG_ATTEMPTS = 6
+# How many candidate pictures to actually look at before giving up on a card.
+MAX_CHECKS = 3
+UNCHECKED = "unchecked"
 DDG_BACKOFF_CAP = 60
 USER_AGENT = "AnkiGen/2.1 (personal flashcard generator)"
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
@@ -80,6 +83,8 @@ def search_duckduckgo(query: str, limit: int = 5, attempts: int = DDG_ATTEMPTS) 
             urls = [
                 r["image"] for r in results
                 if r.get("image") and _width(r.get("width")) >= MIN_SOURCE_WIDTH
+                and not _looks_like_junk(r.get("image"))
+                and not _looks_like_junk(r.get("url"))
             ]
             if urls:
                 return urls
@@ -98,6 +103,21 @@ def search_duckduckgo(query: str, limit: int = 5, attempts: int = DDG_ATTEMPTS) 
                     reason[:70], query, wait, attempt + 1, attempts)
         time.sleep(wait)
     return []
+
+
+# Hosts that reliably serve the wrong picture. Stock libraries watermark
+# theirs, and SEO farms republish scraped photos under titles written to match
+# whatever was searched for — which is how a card about S3's flat namespace
+# ended up illustrated with a basketball player.
+_JUNK_HOSTS = (
+    "gettyimages.", "shutterstock.", "istockphoto.", "alamy.", "dreamstime.",
+    "depositphotos.", "123rf.", "stock.adobe.", "storage.googleapis.com",
+)
+
+
+def _looks_like_junk(url: str) -> bool:
+    u = (url or "").lower()
+    return any(host in u for host in _JUNK_HOSTS)
 
 
 # Words that say what kind of picture is wanted rather than what it is of.
@@ -197,28 +217,60 @@ def download_as_jpeg(url: str, query: str, media_dir: Path) -> str | None:
     return target.name
 
 
-def fetch(card_uid: str, query: str, media_dir: Path) -> ImageResult:
-    """First usable image for a query, DuckDuckGo first then Wikimedia."""
+def fetch(card_uid: str, query: str, media_dir: Path, card: str = "",
+          verifier=None, max_checks: int = MAX_CHECKS) -> ImageResult:
+    """First *usable* image for a query, DuckDuckGo first then Wikimedia.
+
+    With a `verifier`, usable means something looked at the picture and said it
+    illustrates the card. Nothing short of that works: search results come from
+    pages whose text matched the query, and the picture on such a page is
+    frequently unrelated to it.
+    """
     if not query or len(query.strip()) < 3:
         return ImageResult(card_uid, query, detail="no image query")
 
+    checks = 0
     for source, search in (("duckduckgo", search_duckduckgo), ("wikimedia", search_wikimedia)):
         for url in search(query):
             name = download_as_jpeg(url, query, media_dir)
-            if name:
+            if not name:
+                continue
+            if not (verifier and card):
                 return ImageResult(card_uid, query, filename=name, source=source)
+            if checks >= max_checks:
+                # Every look costs a request on a metered free tier, so stop
+                # rather than work through the whole result page.
+                (media_dir / name).unlink(missing_ok=True)
+                return ImageResult(card_uid, query,
+                                   detail=f"no relevant image in the first {checks} checked")
+            try:
+                keep, shows = verifier((media_dir / name).read_bytes(), card, query)
+            except Exception as e:
+                logger.info("Cannot check images (%s); keeping %s unchecked", e, name)
+                return ImageResult(card_uid, query, filename=name, source=source,
+                                   detail=f"{UNCHECKED}: {e}")
+            checks += 1
+            if keep:
+                return ImageResult(card_uid, query, filename=name, source=source,
+                                   detail=f"shows {shows}")
+            logger.info("Rejected an image for %r: it shows %s", query, shows)
+            (media_dir / name).unlink(missing_ok=True)
         logger.info("No usable image from %s for %r", source, query)
     return ImageResult(card_uid, query, detail="no usable image from either source")
 
 
-def fetch_many(jobs: list[tuple[str, str]], media_dir: Path, workers: int = 3) -> list[ImageResult]:
+def fetch_many(jobs: list[tuple], media_dir: Path, workers: int = 3,
+               verifier=None) -> list[ImageResult]:
     """Fetch concurrently, but gently — DuckDuckGo throttles parallel callers."""
     if not jobs:
         return []
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(fetch, uid, query, media_dir) for uid, query in jobs]
+        # A job is (card_uid, query) or (card_uid, query, card_text).
+        jobs = [(j[0], j[1], j[2] if len(j) > 2 else "") for j in jobs]
+        futures = [pool.submit(fetch, uid, query, media_dir, card, verifier)
+                   for uid, query, card in jobs]
         results = []
-        for (uid, query), future in zip(jobs, futures):
+        for (uid, query, _card), future in zip(jobs, futures):
             try:
                 results.append(future.result())
             except Exception as e:                      # never let one image kill the stage

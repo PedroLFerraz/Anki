@@ -58,6 +58,10 @@ class Profile(BaseModel):
     global_quota: int = Field(default=20, ge=1)
     verify: bool = True
     images: bool = True
+    # Show each candidate picture to the model before attaching it. Search
+    # engines match the words on a page, not the picture on it, so this is the
+    # only check that catches a relevant-looking result with a stock photo on it.
+    verify_images: bool = True
 
     # Where generated notes land inside the target deck. Empty (the default)
     # means straight into the deck itself, tagged `ankigen::run_<date>`, so

@@ -5,6 +5,7 @@ and token usage — the run report needs both.
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
@@ -285,3 +286,68 @@ def call_json(prompt: str, max_retries: int = 5, cfg: dict | None = None) -> LLM
             f"every configured model is out of quota for today: {', '.join(usable)}"
         ) from last
     raise last
+
+
+IMAGE_CHECK_PROMPT = (
+    "You are checking whether a picture belongs on a flashcard.\n\n"
+    "The card asks:\n{card}\n\n"
+    "It was illustrated by searching the web for: {query}\n\n"
+    "Look at the picture. Answer JSON only:\n"
+    '{{"shows": "<what the picture actually depicts, in a few words>", '
+    '"helps": true or false}}\n\n'
+    "\"helps\" is true only if the picture illustrates the card's subject — a "
+    "diagram, a chart, a screenshot, a photograph of the thing itself. It is "
+    "false for a stock photo of people, a company logo, an unrelated scene, or "
+    "an image so cluttered or watermarked that it teaches nothing. Web search "
+    "returns plausible-looking results from pages whose text matched but whose "
+    "picture did not, so judge the picture, never the words around it."
+)
+
+
+def check_image(image: bytes, card: str, query: str, cfg: dict | None = None) -> tuple[bool, str]:
+    """Does this picture actually illustrate the card? Returns (verdict, what it shows).
+
+    Reading the page's title is not enough: a card about S3's flat namespace
+    was illustrated with a stock photograph of a basketball player, served by
+    an SEO page whose title matched the query exactly. Only looking at the
+    image catches that.
+    """
+    cfg = cfg or settings.resolve_llm()
+    prompt = IMAGE_CHECK_PROMPT.format(card=card[:400], query=query)
+    chain = [m for m in (cfg.get("models") or [cfg["model"]]) if m and m not in _spent]
+    if not chain:
+        raise QuotaExhausted("no model left to check images with")
+
+    if cfg["provider"] == "gemini":
+        from google.genai import types
+        client = _get_gemini_client()
+        last: Exception | None = None
+        for model in chain:
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=[types.Part.from_bytes(data=image, mime_type="image/jpeg"), prompt],
+                    config=types.GenerateContentConfig(response_mime_type="application/json"),
+                )
+                data = json.loads(response.text)
+                return bool(data.get("helps")), str(data.get("shows", ""))[:120]
+            except Exception as e:
+                if _is_daily_quota(str(e)):
+                    _spent.add(model)
+                elif not _is_retryable(str(e)):
+                    raise
+                last = e
+        raise last
+
+    # OpenAI protocol: images ride along as a data URI.
+    client = _get_openai_client(cfg["base_url"], cfg["api_key"])
+    data_uri = "data:image/jpeg;base64," + base64.b64encode(image).decode()
+    response = client.chat.completions.create(
+        model=chain[0],
+        messages=[{"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": data_uri}},
+        ]}],
+    )
+    data = json.loads(extract_json(response.choices[0].message.content or ""))
+    return bool(data.get("helps")), str(data.get("shows", ""))[:120]
