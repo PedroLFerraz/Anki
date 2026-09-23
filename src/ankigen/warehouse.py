@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS generated_cards (
     front       VARCHAR NOT NULL,
     back        VARCHAR NOT NULL,
     fields_json VARCHAR NOT NULL,
+    image_query VARCHAR,
     model       VARCHAR,
     prompt_tokens     INTEGER,
     completion_tokens INTEGER
@@ -91,6 +92,15 @@ CREATE TABLE IF NOT EXISTS dedup_results (
     is_dup     BOOLEAN NOT NULL,
     reason     VARCHAR,
     similarity DOUBLE
+);
+
+CREATE TABLE IF NOT EXISTS card_images (
+    run_date  DATE    NOT NULL,
+    card_uid  VARCHAR NOT NULL,
+    query     VARCHAR,
+    filename  VARCHAR,
+    source    VARCHAR,
+    detail    VARCHAR
 );
 
 CREATE TABLE IF NOT EXISTS embedding_cache (
@@ -114,8 +124,10 @@ CREATE OR REPLACE VIEW card_outcomes AS
 SELECT
     g.run_date, g.card_uid, g.request_id, g.deck, g.card_type, g.front, g.back,
     g.fields_json, r.reason AS request_reason, r.topic,
+    g.image_query,
     v.passed AS verify_passed, v.score AS verify_score, v.reason AS verify_reason,
     d.is_dup, d.reason AS dup_reason,
+    i.filename AS image_filename, i.source AS image_source,
     CASE
         WHEN v.passed IS FALSE THEN 'dropped_verify'
         WHEN d.is_dup IS TRUE  THEN 'dropped_duplicate'
@@ -125,7 +137,8 @@ SELECT
 FROM generated_cards g
 JOIN requests r USING (run_date, request_id)
 LEFT JOIN verified_cards v USING (run_date, card_uid)
-LEFT JOIN dedup_results d USING (run_date, card_uid);
+LEFT JOIN dedup_results d USING (run_date, card_uid)
+LEFT JOIN card_images   i USING (run_date, card_uid);
 """
 
 
@@ -134,6 +147,11 @@ class Warehouse:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.con = duckdb.connect(str(self.path))
+        # Columns added after a database already existed. The view is recreated
+        # by SCHEMA below, so it must run after the table has caught up.
+        self.con.execute(
+            "ALTER TABLE IF EXISTS generated_cards ADD COLUMN IF NOT EXISTS image_query VARCHAR"
+        )
         self.con.execute(SCHEMA)
 
     def close(self) -> None:

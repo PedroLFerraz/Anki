@@ -1,4 +1,4 @@
-"""The daily pipeline: ingest -> target -> generate -> verify -> dedup -> export -> report.
+"""The daily pipeline: ingest -> target -> generate -> verify -> dedup -> images -> export -> report.
 
 Each stage is a function of (context, run_date) that reads its inputs from the
 warehouse and replaces its own `run_date` partition. That contract is what lets
@@ -16,7 +16,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable
 
-from ankigen import dedup, export, generate, ingest, targeting, verify
+from ankigen import dedup, export, generate, images, ingest, targeting, verify
 from ankigen.config import Settings, settings
 from ankigen.profile import Profile, load_profile
 from ankigen.warehouse import Warehouse
@@ -80,8 +80,36 @@ def stage_dedup(ctx: Context, run_date: date) -> dict:
     return dedup.run(ctx.wh, run_date)
 
 
+def stage_images(ctx: Context, run_date: date) -> dict:
+    """Illustrate the cards that survived. Running after dedup means no image is
+    ever downloaded for a card that is about to be thrown away."""
+    rows = ctx.wh.query(
+        """SELECT card_uid, deck, image_query FROM card_outcomes
+           WHERE run_date = ? AND outcome = 'kept' AND COALESCE(image_query, '') != ''
+           ORDER BY card_uid""",
+        [run_date],
+    )
+    jobs = [(r["card_uid"], r["image_query"]) for r in rows
+            if ctx.profile.wants_images(r["deck"])]
+    results = images.fetch_many(jobs, ctx.settings.data_path / "media")
+
+    ctx.wh.replace_partition(
+        "card_images", run_date,
+        ("run_date", "card_uid", "query", "filename", "source", "detail"),
+        [(run_date, r.card_uid, r.query, r.filename, r.source, r.detail) for r in results],
+    )
+    found = [r for r in results if r.found]
+    return {
+        "wanted": len(jobs),
+        "found": len(found),
+        "by_source": {s: sum(1 for r in found if r.source == s) for s in ("duckduckgo", "wikimedia")},
+        "missing": [r.query for r in results if not r.found],
+    }
+
+
 def stage_export(ctx: Context, run_date: date) -> dict:
-    result = export.run(ctx.wh, run_date, ctx.out_dir)
+    result = export.run(ctx.wh, run_date, ctx.out_dir, ctx.profile,
+                        media_dir=ctx.settings.data_path / "media")
     result["parquet_files"] = len(ctx.wh.export_parquet(run_date, ctx.settings.data_path / "curated"))
     return result
 
@@ -96,6 +124,7 @@ STAGES: dict[str, Callable[[Context, date], dict]] = {
     "generate": stage_generate,
     "verify": stage_verify,
     "dedup": stage_dedup,
+    "images": stage_images,
     "export": stage_export,
     "report": stage_report,
 }

@@ -29,11 +29,20 @@ weak_cards:
 global_quota: 15
 verify: true
 
+# Fetch an illustration when the model judges one genuinely helps.
+# Per-deck `images: false` opts a deck out.
+images: true
+
+# Empty = notes go straight into the deck above, tagged ankigen::run_<date>,
+# so there is nothing to merge. Set e.g. "AnkiGen" for a subdeck instead.
+inbox: ""
+
 decks:
   # --- existing decks: extend them in your own voice ---
   - deck: DS::SQL
     daily_quota: 3
     card_type: basic
+    images: false          # SQL semantics rarely benefit from a picture
     topics:
       - window functions and frame clauses
       - NULL semantics in joins, aggregates and comparisons
@@ -55,7 +64,7 @@ decks:
   - deck: Data Platform::Airflow
     new_deck: true
     daily_quota: 3
-    card_type: basic
+    card_type: detailed
     topics:
       - DAG scheduling, logical dates and catchup
       - idempotent tasks and safe backfills
@@ -66,7 +75,7 @@ decks:
   - deck: Data Platform::Docker
     new_deck: true
     daily_quota: 2
-    card_type: basic
+    card_type: detailed
     topics:
       - images, layers and build cache
       - multi-stage builds and image size
@@ -75,7 +84,7 @@ decks:
   - deck: Data Platform::Kubernetes
     new_deck: true
     daily_quota: 2
-    card_type: basic
+    card_type: detailed
     topics:
       - pods, deployments and jobs versus cronjobs
       - configmaps, secrets and resource requests/limits

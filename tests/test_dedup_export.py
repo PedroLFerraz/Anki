@@ -17,7 +17,7 @@ def _seed(wh, cards, passed=True, request_reason="topic"):
                          [(RUN_DATE, "r1", cards[0][1], "t", "basic", len(cards), request_reason, None, "p")])
     wh.replace_partition("generated_cards", RUN_DATE, generate.GENERATED_COLUMNS, [
         (RUN_DATE, uid, "r1", deck, "basic", front, back,
-         json.dumps({"Question": front, "Answer": back}), "m", 0, 0)
+         json.dumps({"Question": front, "Answer": back}), "", "m", 0, 0)
         for uid, deck, front, back in cards
     ])
     wh.replace_partition("verified_cards", RUN_DATE, ("run_date", "card_uid", "passed", "score", "reason"),
@@ -50,6 +50,20 @@ def test_duplicates_of_existing_notes_are_dropped(wh, modern_collection, tmp_pat
     assert reasons["u1"].startswith("fuzzy")
     assert reasons["u2"].startswith("semantic")      # and against a *subdeck* note
     assert result["semantic"] is True
+
+
+def test_low_threshold_model_catches_more(wh, modern_collection, tmp_path, fake_embeddings, cfg, monkeypatch):
+    """A model whose scores run lower needs a lower threshold to catch the same pair."""
+    from ankigen import dedup as d
+    ingest(wh, RUN_DATE, modern_collection, tmp_path / "raw")
+    _seed(wh, [("u1", "DS::SQL", "LATERAL join: what is it?",
+                "A join whose right side can reference the left.")])
+    monkeypatch.setattr(cfg, "semantic_threshold", 0.99)
+    strict = d.run(wh, RUN_DATE)
+    assert strict["threshold"] == 0.99 and strict["duplicates"] == 0   # too strict to fire
+    monkeypatch.setattr(cfg, "semantic_threshold", 0.60)
+    relaxed = d.run(wh, RUN_DATE)
+    assert relaxed["threshold"] == 0.60 and relaxed["duplicates"] == 1
 
 
 def test_duplicates_within_the_same_run(wh, modern_collection, tmp_path, fake_embeddings, cfg):
@@ -114,7 +128,7 @@ def test_export_writes_inbox_package_with_tags(wh, tmp_path):
     result = export.run(wh, RUN_DATE, tmp_path / "out")
     decks, notes = _notes_in(tmp_path / "out" / str(RUN_DATE) / f"ankigen_{RUN_DATE}.apkg")
     assert result["kept"] == 1
-    assert "AnkiGen Inbox::DS::SQL" in decks
+    assert "DS::SQL" in decks          # straight into the real deck, no merge step
     [(guid, flds, tags)] = notes
     assert flds == "What is a CTE?\x1fA named subquery."
     assert "ankigen::weak_card" in tags and f"ankigen::run_{RUN_DATE}" in tags

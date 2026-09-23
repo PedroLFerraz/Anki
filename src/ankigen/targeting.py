@@ -20,7 +20,10 @@ from string import Template
 from ankigen.ingest import Note
 from ankigen.profile import DeckTarget, Profile
 
-INBOX = "AnkiGen Inbox"
+# v2.0 filed cards under a separate top-level inbox. They now go straight into
+# the deck (or a subdeck of it), but decks exported by the old layout must still
+# count as "already studied" for dedup.
+LEGACY_INBOX = "AnkiGen Inbox"
 CARDS_PER_TOPIC = 5
 AVOID_LIMIT = 40
 
@@ -47,8 +50,8 @@ class GenerationRequest:
 # ------------------------------------------------------------ helpers
 
 def in_deck(note_deck: str, target: str) -> bool:
-    """A target covers its subdecks, and the inbox copies of them."""
-    for root in (target, f"{INBOX}::{target}"):
+    """A target covers its subdecks, and cards filed by any earlier layout."""
+    for root in (target, f"{LEGACY_INBOX}::{target}"):
         if note_deck == root or note_deck.startswith(root + "::"):
             return True
     return False
@@ -108,6 +111,7 @@ def _bullets(items: list[str], empty: str) -> str:
 
 def render_prompt(req: GenerationRequest, profile: Profile, target: DeckTarget) -> str:
     learner, style = profile.learner, profile.style
+    wants_images = profile.wants_images(target.deck)
 
     if req.reason == "weak_card":
         task = (
@@ -145,8 +149,21 @@ def render_prompt(req: GenerationRequest, profile: Profile, target: DeckTarget) 
         examples=examples.strip() or "(no examples available — use a clear, concise style)",
         avoid=_bullets(req.avoid, "(nothing yet — this is a new subject)"),
         rules=_bullets(rules, ""),
-        format=_load(f"format_{req.card_type}.txt").template.strip(),
+        format=_format_contract(req.card_type, wants_images),
     )
+
+
+def _format_contract(card_type: str, wants_images: bool) -> str:
+    """The JSON shape the model must answer with.
+
+    `image_query` goes *inside* the shape rather than being described after it:
+    asked for in a trailing paragraph, the model answered with the three keys
+    the shape listed and silently dropped the fourth, every time.
+    """
+    shape = _load(f"format_{card_type}.txt").substitute(
+        image_field=', "image_query": "..."' if wants_images else ""
+    ).strip()
+    return shape + (_load("image_hint.txt").template.rstrip() if wants_images else "")
 
 
 # ------------------------------------------------------------ targeting

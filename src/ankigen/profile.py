@@ -35,6 +35,8 @@ class WeakCards(BaseModel):
 
 class DeckTarget(BaseModel):
     deck: str
+    # Fetch an illustration when the model judges one genuinely helps.
+    images: bool | None = None
     daily_quota: int = Field(default=5, ge=0)
     card_type: CardType = "basic"
     topics: list[str] = Field(default_factory=list)
@@ -55,6 +57,23 @@ class Profile(BaseModel):
     decks: list[DeckTarget]
     global_quota: int = Field(default=20, ge=1)
     verify: bool = True
+    images: bool = True
+
+    # Where generated notes land inside the target deck. Empty (the default)
+    # means straight into the deck itself, tagged `ankigen::run_<date>`, so
+    # nothing has to be moved afterwards. Set e.g. "AnkiGen" to park them in a
+    # subdeck such as `DS::SQL::AnkiGen` instead.
+    inbox: str = ""
+
+    def wants_images(self, deck: str) -> bool:
+        for target in self.decks:
+            if target.deck == deck:
+                return self.images if target.images is None else target.images
+        return self.images
+
+    def deck_for(self, deck: str) -> str:
+        """The Anki deck a generated card is filed under."""
+        return f"{deck}::{self.inbox}" if self.inbox else deck
 
     def validate_against(self, existing_decks: set[str]) -> list[str]:
         """Problems that would make a run silently produce nothing."""

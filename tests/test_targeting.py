@@ -6,7 +6,7 @@ from conftest import RUN_DATE
 
 from ankigen.ingest import read_notes
 from ankigen.profile import Profile, load_profile
-from ankigen.targeting import INBOX, build_requests, in_deck, nearest
+from ankigen.targeting import LEGACY_INBOX, build_requests, in_deck, nearest
 
 
 # ------------------------------------------------------------------ profile
@@ -49,7 +49,7 @@ def notes(modern_collection):
 def test_in_deck_covers_subdecks_and_inbox():
     assert in_deck("DS::SQL", "DS::SQL")
     assert in_deck("DS::SQL::Advanced", "DS::SQL")
-    assert in_deck(f"{INBOX}::DS::SQL", "DS::SQL")
+    assert in_deck(f"{LEGACY_INBOX}::DS::SQL", "DS::SQL")   # exported by v2.0
     assert not in_deck("DS::SQLite", "DS::SQL")
 
 

@@ -25,6 +25,7 @@ class Card:
     front: str          # plain text, used for dedup and verification
     back: str
     fields: dict = field(default_factory=dict)  # note fields, keyed by card_types field name
+    image_query: str = ""   # empty unless the model judged a picture would help
 
 
 def clean_field(text: str) -> str:
@@ -41,6 +42,20 @@ def fix_cloze_syntax(text: str) -> str:
     return text
 
 
+def image_query(item: dict) -> str:
+    """The model leaves this empty for cards a picture wouldn't help.
+
+    Long queries are truncated rather than dropped: image search matches fewer
+    and worse results the more words it is given, and the model occasionally
+    answers with most of the card's question.
+    """
+    q = clean_field(item.get("image_query", ""))
+    words = q.split()
+    if len(words) > 6:
+        q = " ".join(words[:6])
+    return q if 3 <= len(q) <= 80 else ""
+
+
 def parse_cards(card_type: str, data: dict) -> list[Card]:
     raw = data.get("cards", []) if isinstance(data, dict) else []
     cards: list[Card] = []
@@ -55,7 +70,7 @@ def parse_cards(card_type: str, data: dict) -> list[Card]:
                 logger.warning("Skipping cloze without a valid deletion: %r", text[:60])
                 continue
             plain = CLOZE_PLAIN.sub(r"\1", text)
-            cards.append(Card(plain, text, {"Text": text, "Extra": extra}))
+            cards.append(Card(plain, text, {"Text": text, "Extra": extra}, image_query(item)))
 
         elif card_type == "detailed":
             q = clean_field(item.get("question", ""))
@@ -68,7 +83,7 @@ def parse_cards(card_type: str, data: dict) -> list[Card]:
             cards.append(Card(q, summary, {
                 "Question": q, "Summary": summary, "Explanation": explanation or summary,
                 "Image": "", "Reference": "",
-            }))
+            }, image_query(item)))
 
         else:
             q = clean_field(item.get("question", ""))
@@ -76,7 +91,7 @@ def parse_cards(card_type: str, data: dict) -> list[Card]:
             if len(q) < 5 or len(a) < 2:
                 logger.warning("Skipping low-quality card: Q=%r A=%r", q[:60], a[:40])
                 continue
-            cards.append(Card(q, a, {"Question": q, "Answer": a}))
+            cards.append(Card(q, a, {"Question": q, "Answer": a}, image_query(item)))
     return cards
 
 
@@ -107,7 +122,7 @@ def generate_for_request(req: dict) -> tuple[list[Card], llm.LLMResult | None, i
 
 GENERATED_COLUMNS = (
     "run_date", "card_uid", "request_id", "deck", "card_type", "front", "back",
-    "fields_json", "model", "prompt_tokens", "completion_tokens",
+    "fields_json", "image_query", "model", "prompt_tokens", "completion_tokens",
 )
 
 
@@ -132,7 +147,8 @@ def run(wh, run_date: date, requests: list[dict]) -> dict:
             rows.append((
                 run_date, card_uid(run_date, req["request_id"], card.front), req["request_id"],
                 req["deck"], req["card_type"], card.front, card.back,
-                json.dumps(card.fields, ensure_ascii=False), result.model if result else None,
+                json.dumps(card.fields, ensure_ascii=False), card.image_query,
+                result.model if result else None,
                 p_tok if i == 0 else 0, c_tok if i == 0 else 0,
             ))
     # Two requests can land on the same card; keep the first.
@@ -146,6 +162,7 @@ def run(wh, run_date: date, requests: list[dict]) -> dict:
         "cards": len(unique),
         "requested": sum(r["n"] for r in requests),
         "failed_requests": failures,
+        "with_image_query": sum(1 for r in unique if r[8]),
         "prompt_tokens": total_prompt,
         "completion_tokens": total_completion,
     }
