@@ -13,9 +13,6 @@ import typer
 from ankigen import pipeline
 from ankigen.config import NATIVE_PROVIDERS, PROVIDERS, settings
 
-# The copy the scheduled run reads, since GitHub's runners cannot see this machine.
-COLLECTION_IN_REPO = "collection/collection.anki2"
-
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
@@ -195,25 +192,25 @@ def report(run_date: Optional[str] = DateOpt):
     typer.echo(f"\nPackage: {rep['apkg'] or '(none)'}")
 
 
-@app.command("sync-collection")
-def sync_collection(
-    to: str = typer.Option(COLLECTION_IN_REPO, "--to", help="Where to write the copy."),
-):
-    """Copy the live Anki collection into the repo, for the scheduled run.
+@app.command("pull")
+def pull(no_media: bool = typer.Option(False, "--no-media", help="Skip syncing images.")):
+    """Bring the working copy of your collection up to date from AnkiWeb.
 
-    GitHub's runners have no access to this machine, so the collection they
-    read is whatever was last committed. Run this after a heavy study session
-    and push, and the next run sees your current cards and review history.
+    Run before the pipeline when there is no local Anki to read: the runner in
+    CI has none, so this is where its collection comes from. Downloads a fresh
+    copy the first time, then syncs normally.
     """
-    from ankigen.ingest import snapshot
+    from ankigen import push as pusher
 
-    dest = Path(to)
-    before = dest.stat().st_size if dest.exists() else 0
-    snapshot(settings.anki_collection_path, dest)
-    size = dest.stat().st_size
-
-    typer.echo(f"{dest}  {size / 1e6:.1f} MB" + (f"  (was {before / 1e6:.1f} MB)" if before else ""))
-    typer.echo(f"\nCommit it:\n  git add {dest} && git commit -m \"collection: refresh\" && git push")
+    auth = pusher._auth()
+    col = pusher.open_collection(auth)
+    try:
+        state = pusher.sync(col, auth, media=not no_media)
+        notes = col.db.scalar("SELECT COUNT(*) FROM notes") or 0
+    finally:
+        col.close()
+    path = Path(settings.data_dir) / pusher.WORKING_COPY
+    typer.echo(f"  {state}: {notes} notes in {path}")
 
 
 @app.command("push")

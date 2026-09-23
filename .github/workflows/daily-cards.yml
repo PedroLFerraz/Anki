@@ -4,11 +4,12 @@
 # the pipeline needs is either fetched here or cached:
 #
 #   code        cloned from this repo
-#   collection  committed at collection/collection.anki2, refreshed with
-#               `ankigen sync-collection` — the runner cannot see your machine
+#   collection  synced down from AnkiWeb, since the runner cannot see your
+#               machine. The cards go back the same way, so nothing is
+#               downloaded and imported by hand
 #   embeddings  computed in-process by fastembed; there is no Ollama here
 #   warehouse   restored from the Actions cache, saved again at the end
-#   the cards   uploaded as a workflow artifact for you to download
+#   the cards   synced back to AnkiWeb, and also kept as an artifact
 #
 # Free on public repositories. Note that GitHub disables scheduled workflows
 # after 60 days without a commit, so a dormant repo stops running silently.
@@ -55,15 +56,14 @@ jobs:
       - name: Check the setup is complete
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          ANKIWEB_KEY: ${{ secrets.ANKIWEB_KEY }}
         run: |
-          if [ -z "$GOOGLE_API_KEY" ]; then
-            echo "::error::Missing repository secret GOOGLE_API_KEY."
-            echo "See docs/GITHUB_ACTIONS.md."
-            exit 1
-          fi
-          if [ ! -f collection/collection.anki2 ]; then
-            echo "::error::No collection committed at collection/collection.anki2."
-            echo "Run 'ankigen sync-collection' locally, then commit and push it."
+          missing=""
+          [ -z "$GOOGLE_API_KEY" ] && missing="$missing GOOGLE_API_KEY"
+          [ -z "$ANKIWEB_KEY" ] && missing="$missing ANKIWEB_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing"
+            echo "ANKIWEB_KEY comes from 'ankigen push --login'. See docs/GITHUB_ACTIONS.md."
             exit 1
           fi
 
@@ -75,7 +75,7 @@ jobs:
       # [gemini] pulls google-genai, which is an extra because it is the one
       # provider that does not speak the OpenAI protocol. Without it the run
       # gets all the way to the first request before failing.
-      - run: pip install ".[gemini]"
+      - run: pip install ".[gemini,push]"
 
       # The warehouse holds every past run: what was generated, what was kept,
       # and the embedding cache. Losing it is survivable — the next run rebuilds
@@ -88,6 +88,14 @@ jobs:
           key: warehouse-${{ github.run_id }}
           restore-keys: warehouse-
 
+      - name: Restore the collection
+        uses: actions/cache/restore@v6
+        id: collection
+        with:
+          path: data/anki
+          key: anki-collection-${{ github.run_id }}
+          restore-keys: anki-collection-
+
       - name: Cache the embedding model
         uses: actions/cache@v6
         with:
@@ -96,7 +104,8 @@ jobs:
 
       - name: Run the pipeline
         env:
-          ANKI_COLLECTION_PATH: collection/collection.anki2
+          ANKI_COLLECTION_PATH: data/anki/collection.anki2
+          ANKIWEB_KEY: ${{ secrets.ANKIWEB_KEY }}
           ANKIGEN_PROFILE: profiles/default.yaml
           DATA_DIR: data
           EMBEDDING_PROVIDER: fastembed
@@ -107,16 +116,29 @@ jobs:
           # meter per model, so this also doubles the daily allowance.
           VERIFY_MODEL: ${{ vars.VERIFY_MODEL || 'gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.1-flash-lite' }}
         run: |
-          # Built up rather than branched: the four inputs are independent,
-          # and the CLI already rejects a topic or prompt with no deck.
-          args=()
-          [ -n "${{ inputs.run_date }}" ] && args+=(--date "${{ inputs.run_date }}")
-          [ -n "${{ inputs.deck }}" ]     && args+=(--deck "${{ inputs.deck }}")
-          [ -n "${{ inputs.topic }}" ]    && args+=(--topic "${{ inputs.topic }}")
-          [ -n "${{ inputs.prompt }}" ]   && args+=(--prompt "${{ inputs.prompt }}")
-          [ -n "${{ inputs.count }}" ]    && args+=(--count "${{ inputs.count }}")
+          # Built up rather than branched: the inputs are independent, and the
+          # CLI already rejects a topic or prompt with no deck.
+          when=()
+          [ -n "${{ inputs.run_date }}" ] && when+=(--date "${{ inputs.run_date }}")
+          args=("${when[@]}")
+          [ -n "${{ inputs.deck }}" ]   && args+=(--deck "${{ inputs.deck }}")
+          [ -n "${{ inputs.topic }}" ]  && args+=(--topic "${{ inputs.topic }}")
+          [ -n "${{ inputs.prompt }}" ] && args+=(--prompt "${{ inputs.prompt }}")
+          [ -n "${{ inputs.count }}" ]  && args+=(--count "${{ inputs.count }}")
+
+          python -m ankigen pull
           echo "ankigen run ${args[*]}"
           python -m ankigen run "${args[@]}"
+          # push syncs down again first, so anything reviewed while the run was
+          # working is merged before the new cards go up.
+          python -m ankigen push "${when[@]}"
+
+      - name: Save the collection
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: data/anki
+          key: anki-collection-${{ github.run_id }}
 
       - name: Save the warehouse
         if: always()            # a failed generate still advanced ingest

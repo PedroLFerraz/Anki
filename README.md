@@ -144,9 +144,10 @@ seconds.
 ## Running it daily
 
 Without leaving a machine on: a [GitHub Actions workflow](.github/workflows/daily-cards.yml)
-runs the pipeline on GitHub's runners each morning and uploads the `.apkg` as an
-artifact. Free on a public repo, one secret to set up — see
-[docs/GITHUB_ACTIONS.md](docs/GITHUB_ACTIONS.md).
+runs the pipeline on GitHub's runners each morning. It syncs your collection
+down from AnkiWeb, writes the cards, and syncs them back, so they appear on your
+phone and desktop with nothing to import. Free on a public repo, two secrets to
+set up — see [docs/GITHUB_ACTIONS.md](docs/GITHUB_ACTIONS.md).
 
 There is also an [Airflow stack](infra/airflow/) that runs the same eight stages
 as eight tasks, which is the orchestration you would use at work; it needs
