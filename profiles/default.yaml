@@ -26,7 +26,7 @@ weak_cards:
   max_ease: 2100
   max_per_deck: 1
 
-global_quota: 15
+global_quota: 18
 verify: true
 
 # Fetch an illustration when the model judges one genuinely helps.
@@ -37,6 +37,9 @@ images: true
 # so there is nothing to merge. Set e.g. "AnkiGen" for a subdeck instead.
 inbox: ""
 
+# Topics advance one per day, in order, and wrap around. So a list ordered from
+# fundamentals to advanced builds the deck the way you would learn it, and the
+# length of the list is how many days a full pass takes.
 decks:
   # --- existing decks: extend them in your own voice ---
   - deck: DS::SQL
@@ -61,38 +64,107 @@ decks:
       - A/B test design and power
 
   # --- new subjects for the data platform move ---
+  # The vocabulary and the trade-offs, before any particular tool.
+  - deck: Data Platform::Fundamentals
+    new_deck: true
+    daily_quota: 3
+    card_type: detailed
+    topics:
+      - "the shape of a data platform: ingestion, storage, transformation, serving"
+      - OLTP versus OLAP, and why they store data differently
+      - row versus columnar storage, and what columnar buys you
+      - "file formats: CSV, JSON, Parquet and Avro trade-offs"
+      - partitioning, file sizes and the small-file problem
+      - data lake versus warehouse versus lakehouse
+      - schema on read versus schema on write
+      - batch versus streaming, and when each is the right shape
+      - idempotency and determinism, and why reruns must be safe
+      - "incremental versus full loads: watermarks and late-arriving data"
+      - slowly changing dimensions and keeping history
+      - star schemas and dimensional modelling basics
+      - "data quality checks: freshness, completeness, uniqueness"
+      - lineage, catalogues and why metadata is infrastructure
+      - ETL versus ELT, and where the transformation belongs
+      - "orchestration versus scheduling: dependencies, retries and state"
+      - what makes a backfill cheap or expensive
+      - "cost and performance on object storage: scan volume and pruning"
+    instructions: >
+      Tool-neutral. Explain the trade-off or the failure mode a practitioner
+      actually runs into, not a vendor's marketing distinction.
+
   - deck: Data Platform::Airflow
     new_deck: true
     daily_quota: 3
     card_type: detailed
     topics:
-      - DAG scheduling, logical dates and catchup
+      - what Airflow is for, and what it is not
+      - "DAGs, tasks and operators: the vocabulary"
+      - logical date versus wall-clock time
+      - schedules, intervals and catchup
       - idempotent tasks and safe backfills
-      - executors and how tasks actually run
+      - dependencies, trigger rules and branching
+      - retries, timeouts and SLAs
       - XCom, and why not to pass data through it
-      - sensors, deferrable operators and retries
+      - "executors: sequential, local, celery and kubernetes"
+      - the scheduler, the dag processor and the metadata database
+      - "sensors: poke versus reschedule, and deferrable operators"
+      - pools, priority weights and concurrency limits
+      - connections, variables and secrets backends
+      - the TaskFlow API versus classic operators
+      - dynamic task mapping
+      - testing DAGs and developing them locally
+      - "observability: task states, logs and alerting"
+      - "anti-patterns: top-level code, heavy imports, data in XCom"
 
   - deck: Data Platform::Docker
     new_deck: true
     daily_quota: 2
     card_type: detailed
     topics:
-      - images, layers and build cache
+      - containers versus virtual machines
+      - images, layers and the build cache
+      - the Dockerfile instructions that actually matter
       - multi-stage builds and image size
+      - ENTRYPOINT versus CMD
       - volumes, bind mounts and container state
+      - networking, ports and service discovery
+      - environment variables, configuration and secrets
+      - running as a non-root user, and why
+      - Compose for multi-container stacks
+      - "debugging a container: logs, exec and inspect"
+      - registries, tags and digests
 
   - deck: Data Platform::Kubernetes
     new_deck: true
     daily_quota: 2
     card_type: detailed
     topics:
-      - pods, deployments and jobs versus cronjobs
-      - configmaps, secrets and resource requests/limits
+      - what Kubernetes adds over running containers yourself
+      - the control plane and the node components
+      - "pods: the unit of scheduling"
+      - deployments, replicasets and rolling updates
+      - jobs versus cronjobs for batch work
+      - services, and how traffic reaches a pod
+      - configmaps and secrets
+      - resource requests, limits and eviction
+      - liveness, readiness and startup probes
+      - namespaces, labels and selectors
+      - persistent volumes and claims
+      - "debugging a failing pod: describe, events and logs"
 
   - deck: Data Platform::AWS
     new_deck: true
     daily_quota: 2
     card_type: cloze
     topics:
-      - S3 storage classes, lifecycle rules and data lake layout
-      - IAM least privilege, roles versus users
+      - "S3 objects, prefixes and the folders that do not exist"
+      - S3 storage classes and lifecycle rules
+      - "data lake layout on S3: raw, curated and gold"
+      - IAM users versus roles, and least privilege
+      - identity policies versus resource policies
+      - the data catalogue and what it stores
+      - querying files in place, and what a query scans
+      - partition pruning and the cost of a query
+      - EC2 instance sizing and the free tier
+      - "VPC basics: subnets and security groups"
+      - "keeping the bill at zero: budgets and free-tier limits"
