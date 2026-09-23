@@ -78,7 +78,16 @@ def nearest(query: str, notes: list[Note], k: int) -> list[str]:
     token budget, and the cards it's likeliest to duplicate are the related
     ones, so those are what it sees.
     """
-    scored = [(_relevance(query, f"{n.front} {n.back}"), n) for n in notes]
+    # Searching the whole collection rather than one deck means a single word
+    # in common is no longer evidence of anything: "what makes a backfill
+    # cheap or expensive" turned up a card about painters. Ask for two.
+    q = _tokens(query)
+    need = min(2, len(q))
+    scored = [
+        (_relevance(query, text), n)
+        for n, text in ((n, f"{n.front} {n.back}") for n in notes)
+        if len(q & _tokens(text)) >= need
+    ]
     # Unrelated cards only spend tokens; the model can't duplicate what it's
     # not writing about.
     ranked = sorted((s for s in scored if s[0] > 0), key=lambda s: (-s[0], s[1].note_id))
@@ -198,7 +207,11 @@ def build_requests(profile: Profile, notes: list[Note], run_date: date) -> list[
                 topic=topic,
                 focus=f"Q: {focus.front}\nA: {focus.back}" if focus else None,
                 style_examples=_style_examples(style_pool, k, rng),
-                avoid=nearest(query, deck_notes, AVOID_LIMIT),
+                # Drawn from the whole collection, not just this deck: dedup
+                # would drop a card that repeats something filed elsewhere, so
+                # asking for it at all wastes a request, and free tiers ration
+                # those by the day.
+                avoid=nearest(query, notes, AVOID_LIMIT),
             ))
 
         # 1. Weak cards first: fixing what the learner keeps failing beats new material.
