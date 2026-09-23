@@ -134,6 +134,11 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     llm_model: str = ""
 
+    # The card checker. Empty means "same model that wrote the card", which
+    # works but is the weaker arrangement — see resolve_verify.
+    verify_provider: str = ""
+    verify_model: str = ""
+
     # Embeddings are configured separately on purpose: most free chat APIs do
     # not serve embeddings, so the usual setup is a hosted model for generation
     # plus local Ollama for embeddings. Empty means "derive from llm_provider".
@@ -147,7 +152,7 @@ class Settings(BaseSettings):
     # Google retires model ids for new keys without warning: 2.5-flash now
     # 404s with "no longer available to new users". `ankigen providers` will
     # surface that, and the current list is at models.list().
-    gemini_model: str = "gemini-3.8-flash"
+    gemini_model: str = "gemini-3.6-flash"
     embedding_model: str = "gemini-embedding-001"
 
     # Retained so existing .env files and the Ollama defaults keep working.
@@ -211,6 +216,29 @@ class Settings(BaseSettings):
             "model": model,
             "needs_key": preset["needs_key"],
         }
+
+    def resolve_verify(self) -> dict:
+        """Chat config for the card checker.
+
+        Worth pointing at a different model from the generator. The checker
+        exists to catch the generator's factual errors, and a model marking its
+        own homework shares its own blind spots — on a sample of real runs the
+        drops were overwhelmingly errors one model made and another spotted.
+        Free tiers also meter per model, so an independent checker costs
+        nothing extra. Falls back to the generation config when unset.
+        """
+        if not (self.verify_provider or self.verify_model):
+            return self.resolve_llm()
+
+        overridden = self.model_copy(update={
+            "llm_provider": self.verify_provider or self.llm_provider,
+            "llm_model": "" if self.verify_provider else self.verify_model,
+            "gemini_model": self.verify_model or self.gemini_model,
+        })
+        cfg = overridden.resolve_llm()
+        if self.verify_model and self.verify_provider:
+            cfg["model"] = self.verify_model
+        return cfg
 
     def resolve_embedding(self) -> dict:
         """Effective embedding config, or provider=None when unavailable.

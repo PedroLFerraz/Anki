@@ -170,7 +170,7 @@ class FakeLLM:
         self.bad_words = bad_words
         self.fail_verify = fail_verify
 
-    def __call__(self, prompt: str, max_retries: int = 3) -> llm.LLMResult:
+    def __call__(self, prompt: str, max_retries: int = 5, cfg: dict | None = None) -> llm.LLMResult:
         self.calls.append(prompt)
         if "fact-checker" in prompt:
             if self.fail_verify:

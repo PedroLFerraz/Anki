@@ -16,6 +16,7 @@ from importlib import resources
 from string import Template
 
 from ankigen import llm
+from ankigen.config import settings
 from ankigen.profile import Profile
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ def run(wh, run_date: date, profile: Profile) -> dict:
     )
     rows = []
     checker_errors = 0
+    checker = settings.resolve_verify()
 
     if not profile.verify:
         rows = [(run_date, c["card_uid"], True, None, "verification disabled") for c in cards]
@@ -82,7 +84,10 @@ def run(wh, run_date: date, profile: Profile) -> dict:
             batches.setdefault(c["request_id"], []).append(c)
         for batch in batches.values():
             try:
-                result = llm.call_json(build_prompt(batch[0]["deck"], profile.learner.level, batch))
+                result = llm.call_json(
+                    build_prompt(batch[0]["deck"], profile.learner.level, batch),
+                    cfg=checker,
+                )
                 verdicts = judge(result.data.get("results", []), batch)
             except Exception as e:
                 logger.warning("Verification failed for %d card(s): %s", len(batch), e)

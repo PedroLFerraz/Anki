@@ -241,6 +241,27 @@ def test_verify_drops_incorrect_cards(wh, monkeypatch):
     assert (result["passed"], result["dropped"]) == (1, 1)
 
 
+def test_verify_asks_the_configured_checker_model(wh, monkeypatch):
+    """The checker is pointed at its own model so it is not the generator
+    reviewing itself."""
+    from ankigen.config import settings
+
+    monkeypatch.setattr(settings, "verify_provider", "gemini", raising=False)
+    monkeypatch.setattr(settings, "verify_model", "gemini-3.6-flash", raising=False)
+    monkeypatch.setattr(settings, "google_api_key", "k", raising=False)
+
+    seen = {}
+
+    def spy(prompt, max_retries=5, cfg=None):
+        seen.update(cfg or {})
+        return FakeLLM()(prompt)
+
+    _seed_generated(wh)
+    monkeypatch.setattr(llm, "call_json", spy)
+    verify.run(wh, RUN_DATE, Profile.model_validate({"decks": [{"deck": "DS::SQL"}]}))
+    assert (seen["provider"], seen["model"]) == ("gemini", "gemini-3.6-flash")
+
+
 def test_checker_outage_passes_cards_as_unverified(wh, monkeypatch):
     _seed_generated(wh)
     monkeypatch.setattr(llm, "call_json", FakeLLM(fail_verify=True))

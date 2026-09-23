@@ -48,6 +48,26 @@ def test_embeddings_none_for_unsupported_explicit_choice():
     assert _s(embedding_provider="groq").resolve_embedding()["provider"] is None
 
 
+def test_checker_defaults_to_the_generating_model():
+    cfg = _s(llm_provider="groq", llm_api_key="k")
+    assert cfg.resolve_verify() == cfg.resolve_llm()
+
+
+def test_checker_can_be_a_different_model_or_provider():
+    """A model marking its own homework shares its own blind spots, and free
+    tiers meter per model, so an independent checker is free in both senses."""
+    same_provider = _s(llm_provider="gemini", google_api_key="k",
+                       gemini_model="gemini-3.6-flash", verify_model="gemini-3.5-flash")
+    assert same_provider.resolve_verify()["model"] == "gemini-3.5-flash"
+    assert same_provider.resolve_llm()["model"] == "gemini-3.6-flash"
+
+    split = _s(llm_provider="groq", llm_api_key="k", google_api_key="g",
+               verify_provider="gemini", verify_model="gemini-3.6-flash")
+    assert split.resolve_llm()["provider"] == "groq"
+    assert (split.resolve_verify()["provider"], split.resolve_verify()["model"]) \
+        == ("gemini", "gemini-3.6-flash")
+
+
 def test_threshold_comes_from_the_embedding_model():
     """Similarity scales differ per model, so the threshold travels with it."""
     assert _s(llm_provider="ollama").resolve_embedding()["threshold"] == 0.90

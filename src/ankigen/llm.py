@@ -155,9 +155,16 @@ def _chat_json(client, model: str, prompt: str) -> tuple[str, int, int]:
     return (extract_json(response.choices[0].message.content or ""), *_usage(response))
 
 
-def call_json(prompt: str, max_retries: int = 3) -> LLMResult:
-    """One JSON completion, with retries on rate limits and malformed JSON."""
-    cfg = settings.resolve_llm()
+def call_json(prompt: str, max_retries: int = 5, cfg: dict | None = None) -> LLMResult:
+    """One JSON completion, with retries on rate limits and malformed JSON.
+
+    Patient on purpose. Free tiers put everyone on the same popular models, so
+    503 "experiencing high demand" is routine rather than exceptional — the
+    newest Gemini flash answered none of seven requests one morning while the
+    previous one answered in 1.5s. A daily batch has nobody waiting on it, so
+    backing off for a minute beats losing the day's cards.
+    """
+    cfg = cfg or settings.resolve_llm()
     ensure_free(cfg["provider"], cfg["model"], settings.allow_paid_models)
     for attempt in range(max_retries):
         try:
@@ -187,7 +194,10 @@ def call_json(prompt: str, max_retries: int = 3) -> LLMResult:
             msg = str(e)
             if _is_retryable(msg) and attempt < max_retries - 1:
                 match = re.search(r"(?:retryDelay|try again in)\D*?(\d+(?:\.\d+)?)s", msg)
-                wait = float(match.group(1)) + 2 if match else 5 * (attempt + 1)
+                # The provider's own hint wins; otherwise back off exponentially
+                # rather than linearly, since an overloaded model stays that way
+                # for longer than the 5s and 10s a linear ramp waited.
+                wait = float(match.group(1)) + 2 if match else min(60, 5 * 2 ** attempt)
                 logger.info("Provider busy (%s); waiting %.0fs (attempt %d/%d)",
                             msg[:70], wait, attempt + 1, max_retries)
                 time.sleep(wait)
