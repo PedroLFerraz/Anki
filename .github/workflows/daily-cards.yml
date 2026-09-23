@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check the setup is complete
         env:
@@ -51,7 +51,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -65,7 +65,7 @@ jobs:
       # and the embedding cache. Losing it is survivable — the next run rebuilds
       # from the collection — but it would forget which cards it already made.
       - name: Restore the warehouse
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         id: warehouse
         with:
           path: data/warehouse.duckdb
@@ -73,7 +73,7 @@ jobs:
           restore-keys: warehouse-
 
       - name: Cache the embedding model
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/fastembed
           key: fastembed-bge-small-en-v1.5
@@ -86,10 +86,10 @@ jobs:
           EMBEDDING_PROVIDER: fastembed
           LLM_PROVIDER: gemini
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash' }}
           # A checker that is not the writer catches more, and free tiers
           # meter per model, so this also doubles the daily allowance.
-          VERIFY_MODEL: ${{ vars.VERIFY_MODEL || 'gemini-3.5-flash' }}
+          VERIFY_MODEL: ${{ vars.VERIFY_MODEL || 'gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.1-flash-lite' }}
         run: |
           if [ -n "${{ inputs.run_date }}" ]; then
             python -m ankigen run --date "${{ inputs.run_date }}"
@@ -99,14 +99,14 @@ jobs:
 
       - name: Save the warehouse
         if: always()            # a failed generate still advanced ingest
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: data/warehouse.duckdb
           key: warehouse-${{ github.run_id }}
 
       - name: Upload the cards
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cards-${{ inputs.run_date || 'today' }}
           path: |

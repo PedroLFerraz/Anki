@@ -65,7 +65,8 @@ unused, which a daily schedule prevents.
 roughly 14MB a day. The warehouse wants a retention policy before this has been
 running long.
 
-**Gemini's free tier is 20 chat requests per day, per model.** A run uses about
-seven for generation and seven for checking, which is why `VERIFY_MODEL` points
-at a different model — it doubles the allowance and gives a second opinion from
-something that did not write the card.
+**Gemini's free tier is 20 chat requests per day, per model.** Both
+`GEMINI_MODEL` and `VERIFY_MODEL` therefore take a comma-separated preference
+order, best model first; the run walks down it as models run out or return 503.
+The checker is a different family from the writer on purpose — it doubles the
+allowance, and a model marking its own homework shares its blind spots.

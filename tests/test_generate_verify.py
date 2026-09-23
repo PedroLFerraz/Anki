@@ -349,3 +349,69 @@ def test_quota_exhaustion_stops_the_remaining_requests(wh, monkeypatch):
     with pytest.raises(generate.GenerationFailed):
         generate.run(wh, RUN_DATE, reqs)
     assert len(calls) == 1                   # asked once, then gave up on the rest
+
+
+# ---------------------------------------------------------------- model chain
+
+@pytest.fixture
+def chain(monkeypatch):
+    """A three-model preference order, with nothing marked spent."""
+    monkeypatch.setattr(llm, "_spent", set())
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    return {"provider": "gemini", "base_url": None, "api_key": "k",
+            "model": "best", "models": ["best", "middling", "worst"], "needs_key": True}
+
+
+def _answers(monkeypatch, behaviour):
+    """behaviour: {model: Exception to raise, or None to answer}."""
+    seen = []
+
+    def one(prompt, cfg, model, max_retries):
+        seen.append(model)
+        outcome = behaviour.get(model)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return llm.LLMResult({"ok": model}, model, 1, 1)
+
+    monkeypatch.setattr(llm, "_call_one_model", one)
+    return seen
+
+
+def test_the_best_model_is_used_while_it_answers(chain, monkeypatch):
+    seen = _answers(monkeypatch, {})
+    assert llm.call_json("p", cfg=chain).data == {"ok": "best"}
+    assert seen == ["best"]
+
+
+def test_an_exhausted_model_falls_through_to_the_next(chain, monkeypatch):
+    seen = _answers(monkeypatch, {"best": llm.QuotaExhausted(GEMINI_DAILY_429)})
+    assert llm.call_json("p", cfg=chain).data == {"ok": "middling"}
+    assert seen == ["best", "middling"]
+
+
+def test_an_overloaded_model_falls_through_too(chain, monkeypatch):
+    """The newest models are the busiest: one answered none of seven requests
+    while the previous one answered in 1.5s."""
+    seen = _answers(monkeypatch, {"best": RuntimeError("503 UNAVAILABLE high demand")})
+    assert llm.call_json("p", cfg=chain).data == {"ok": "middling"}
+    assert seen == ["best", "middling"]
+
+
+def test_a_spent_model_is_not_asked_again(chain, monkeypatch):
+    seen = _answers(monkeypatch, {"best": llm.QuotaExhausted(GEMINI_DAILY_429)})
+    llm.call_json("p", cfg=chain)
+    llm.call_json("p", cfg=chain)
+    assert seen == ["best", "middling", "middling"]      # not asked twice
+
+
+def test_a_real_error_is_not_papered_over_by_the_chain(chain, monkeypatch):
+    seen = _answers(monkeypatch, {"best": RuntimeError("401 invalid api key")})
+    with pytest.raises(RuntimeError, match="invalid api key"):
+        llm.call_json("p", cfg=chain)
+    assert seen == ["best"]                              # no point trying the rest
+
+
+def test_running_out_everywhere_says_so(chain, monkeypatch):
+    _answers(monkeypatch, {m: llm.QuotaExhausted(GEMINI_DAILY_429) for m in chain["models"]})
+    with pytest.raises(llm.QuotaExhausted, match="every configured model"):
+        llm.call_json("p", cfg=chain)

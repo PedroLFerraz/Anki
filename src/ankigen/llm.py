@@ -35,6 +35,11 @@ _RETRYABLE = ("429", "rate limit", "overload", "temporarily", "timeout",
 _DAILY_QUOTA = re.compile(r"per[-_ ]?day", re.IGNORECASE)
 
 
+# Models whose daily allowance ran out during this run; asking again just
+# spends the retry budget to be told the same thing.
+_spent: set[str] = set()
+
+
 class QuotaExhausted(RuntimeError):
     """The provider's allowance for the day is gone. Nothing to wait for."""
 
@@ -195,17 +200,9 @@ def preflight() -> None:
             raise RuntimeError(f"{label} is {provider} but LLM_API_KEY is empty.")
 
 
-def call_json(prompt: str, max_retries: int = 5, cfg: dict | None = None) -> LLMResult:
-    """One JSON completion, with retries on rate limits and malformed JSON.
-
-    Patient on purpose. Free tiers put everyone on the same popular models, so
-    503 "experiencing high demand" is routine rather than exceptional — the
-    newest Gemini flash answered none of seven requests one morning while the
-    previous one answered in 1.5s. A daily batch has nobody waiting on it, so
-    backing off for a minute beats losing the day's cards.
-    """
-    cfg = cfg or settings.resolve_llm()
-    ensure_free(cfg["provider"], cfg["model"], settings.allow_paid_models)
+def _call_one_model(prompt: str, cfg: dict, model: str, max_retries: int) -> LLMResult:
+    """One model, retried. Raises QuotaExhausted when its day is done."""
+    ensure_free(cfg["provider"], model, settings.allow_paid_models)
     for attempt in range(max_retries):
         try:
             if cfg["provider"] == "gemini":
@@ -214,18 +211,18 @@ def call_json(prompt: str, max_retries: int = 5, cfg: dict | None = None) -> LLM
                 if not client:
                     raise RuntimeError("No GOOGLE_API_KEY configured")
                 response = client.models.generate_content(
-                    model=cfg["model"], contents=prompt,
+                    model=model, contents=prompt,
                     config=types.GenerateContentConfig(response_mime_type="application/json"),
                 )
                 meta = getattr(response, "usage_metadata", None)
                 return LLMResult(
-                    json.loads(response.text), cfg["model"],
+                    json.loads(response.text), model,
                     getattr(meta, "prompt_token_count", 0) or 0,
                     getattr(meta, "candidates_token_count", 0) or 0,
                 )
             client = _get_openai_client(cfg["base_url"], cfg["api_key"])
-            text, p_tok, c_tok = _chat_json(client, cfg["model"], prompt)
-            return LLMResult(json.loads(text), cfg["model"], p_tok, c_tok)
+            text, p_tok, c_tok = _chat_json(client, model, prompt)
+            return LLMResult(json.loads(text), model, p_tok, c_tok)
         except json.JSONDecodeError as e:
             logger.warning("JSON parse failed (attempt %d/%d): %s", attempt + 1, max_retries, e)
             if attempt == max_retries - 1:
@@ -240,9 +237,51 @@ def call_json(prompt: str, max_retries: int = 5, cfg: dict | None = None) -> LLM
                 # rather than linearly, since an overloaded model stays that way
                 # for longer than the 5s and 10s a linear ramp waited.
                 wait = min(90.0, float(match.group(1)) + 2) if match else min(60, 5 * 2 ** attempt)
-                logger.info("Provider busy (%s); waiting %.0fs (attempt %d/%d)",
-                            msg[:70], wait, attempt + 1, max_retries)
+                logger.info("%s busy (%s); waiting %.0fs (attempt %d/%d)",
+                            model, msg[:60], wait, attempt + 1, max_retries)
                 time.sleep(wait)
             else:
                 raise
     raise RuntimeError("Max retries exceeded")
+
+
+def call_json(prompt: str, max_retries: int = 5, cfg: dict | None = None) -> LLMResult:
+    """One JSON completion, working down the configured chain of models.
+
+    Two things make a chain worth having rather than a single model. Free tiers
+    meter per model and give about twenty requests a day each, so the best
+    model runs out mid-run; and the newest models are the busiest, answering
+    503 for minutes at a time while the previous one replies instantly. Either
+    way the answer is the same: move down the list and keep going.
+
+    Retries are patient within a model — a daily batch has nobody waiting on it
+    — but a model whose allowance is gone is skipped for the rest of the
+    process rather than asked again once per request.
+    """
+    cfg = cfg or settings.resolve_llm()
+    chain = [m for m in (cfg.get("models") or [cfg["model"]]) if m]
+    usable = [m for m in chain if m not in _spent]
+    if not usable:
+        raise QuotaExhausted(
+            f"every configured model is out of quota for today: {', '.join(chain)}"
+        )
+
+    last: Exception | None = None
+    for model in usable:
+        try:
+            return _call_one_model(prompt, cfg, model, max_retries)
+        except QuotaExhausted as e:
+            logger.warning("%s is out of quota for today; falling back", model)
+            _spent.add(model)
+            last = e
+        except Exception as e:
+            if not _is_retryable(str(e)):
+                raise                       # a real error: bad key, bad request
+            logger.warning("%s did not answer (%s); falling back", model, str(e)[:60])
+            last = e
+
+    if isinstance(last, QuotaExhausted):
+        raise QuotaExhausted(
+            f"every configured model is out of quota for today: {', '.join(usable)}"
+        ) from last
+    raise last

@@ -114,6 +114,15 @@ class PaidModelBlocked(RuntimeError):
     """Raised before a request that would cost money."""
 
 
+def model_chain(value: str) -> list[str]:
+    """Split "best,next,last" into a preference order.
+
+    Free tiers meter per model, so a chain is how you keep writing once the
+    best model's allowance is gone: the good one first, weaker ones behind it.
+    """
+    return [m.strip() for m in (value or "").split(",") if m.strip()]
+
+
 def ensure_free(provider: str, model: str, allow_paid: bool) -> None:
     """Refuse to call a paid OpenRouter model unless explicitly allowed.
 
@@ -141,7 +150,7 @@ class Settings(BaseSettings):
     llm_model: str = ""
 
     # The card checker. Empty means "same model that wrote the card", which
-    # works but is the weaker arrangement — see resolve_verify.
+    # works but is the weaker arrangement — see resolve_verify. Also a chain.
     verify_provider: str = ""
     verify_model: str = ""
 
@@ -155,10 +164,13 @@ class Settings(BaseSettings):
 
     # Gemini
     google_api_key: str = ""
-    # Google retires model ids for new keys without warning: 2.5-flash now
-    # 404s with "no longer available to new users". `ankigen providers` will
-    # surface that, and the current list is at models.list().
-    gemini_model: str = "gemini-3.6-flash"
+    # A preference order, not one model. Google meters roughly twenty requests
+    # a day per model, and the newest are the busiest — 3.8 answered none of
+    # seven requests one morning while 3.6 answered in 1.5s. Best first, and
+    # the run walks down the list as models run out or stay busy. Google also
+    # retires ids without warning (2.5-flash now 404s for new keys); the
+    # current list is at models.list(), and `ankigen providers` surfaces it.
+    gemini_model: str = "gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash"
     embedding_model: str = "gemini-embedding-001"
 
     # Retained so existing .env files and the Ollama defaults keep working.
@@ -196,11 +208,13 @@ class Settings(BaseSettings):
         name = (self.llm_provider or "ollama").strip().lower()
 
         if name in NATIVE_PROVIDERS:
+            chain = model_chain(self.gemini_model)
             return {
                 "provider": name,
                 "base_url": None,
                 "api_key": self.google_api_key,
-                "model": self.gemini_model,
+                "model": chain[0] if chain else "",
+                "models": chain,
                 "needs_key": True,
             }
 
@@ -214,12 +228,14 @@ class Settings(BaseSettings):
             base_url = self.llm_base_url or preset["base_url"]
             model = self.llm_model or preset["model"]
 
+        chain = model_chain(model)
         return {
             "provider": name,
             "base_url": base_url,
             # Local Ollama ignores the key but the OpenAI SDK demands a non-empty one.
             "api_key": self.llm_api_key or ("ollama" if not preset["needs_key"] else ""),
-            "model": model,
+            "model": chain[0] if chain else "",
+            "models": chain,
             "needs_key": preset["needs_key"],
         }
 
@@ -243,7 +259,8 @@ class Settings(BaseSettings):
         })
         cfg = overridden.resolve_llm()
         if self.verify_model and self.verify_provider:
-            cfg["model"] = self.verify_model
+            chain = model_chain(self.verify_model)
+            cfg["model"], cfg["models"] = chain[0], chain
         return cfg
 
     def resolve_embedding(self) -> dict:
