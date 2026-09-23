@@ -28,6 +28,9 @@ PROVIDERS: dict[str, dict] = {
         "base_url": "http://localhost:11434/v1",
         "model": "phi4-mini",
         "embedding_model": "nomic-embed-text",
+        # Similarity scale differs per embedding model, so the duplicate
+        # threshold belongs to the model, not to the dedup code.
+        "embedding_threshold": 0.90,
         "needs_key": False,
         "notes": "Runs on your machine. No limits, no key, works offline.",
     },
@@ -40,7 +43,8 @@ PROVIDERS: dict[str, dict] = {
         "model": "openai/gpt-oss-120b",
         "embedding_model": None,
         "needs_key": True,
-        "notes": "Recommended. 120B open-weight model, very fast. No embeddings.",
+        "notes": "Fastest, 1000 requests/day. No embeddings endpoint, so those "
+                 "fall back to local Ollama.",
     },
     "nvidia": {
         "label": "NVIDIA NIM",
@@ -48,15 +52,22 @@ PROVIDERS: dict[str, dict] = {
         "model": "meta/llama-3.3-70b-instruct",
         "embedding_model": "nvidia/nv-embedqa-e5-v5",
         "needs_key": True,
-        "notes": "The only free preset here that serves both chat and embeddings.",
+        "notes": "Serves both chat and embeddings. Needs a free developer account.",
     },
     "openrouter": {
         "label": "OpenRouter",
+        # Verified against https://openrouter.ai/api/v1/models. OpenRouter retires
+        # free model ids often, so check there if a request 404s.
         "base_url": "https://openrouter.ai/api/v1",
-        "model": "meta-llama/llama-3.3-70b-instruct:free",
-        "embedding_model": None,
+        "model": "nvidia/nemotron-3-super-120b-a12b:free",
+        "embedding_model": "liquid/lfm-2.5-embedding-350m:free",
+        # Measured on real card pairs: reworded duplicates 0.92-0.98,
+        # same-topic non-duplicates 0.20-0.35, unrelated ~0.00. This model has a
+        # far lower floor than nomic, so 0.90 would miss real duplicates.
+        "embedding_threshold": 0.60,
         "needs_key": True,
-        "notes": "Many free models; per-model daily caps are low.",
+        "notes": "One key for chat and embeddings, both free. ~50 requests/day "
+                 "until you have bought $10 of credit, then 1000.",
     },
     "sambanova": {
         "label": "SambaNova",
@@ -80,9 +91,33 @@ PROVIDERS: dict[str, dict] = {
 # on its own path in agents.py / embeddings.py.
 NATIVE_PROVIDERS = {"gemini"}
 
+# Used when a model has no measured threshold of its own.
+DEFAULT_SEMANTIC_THRESHOLD = 0.90
+
 
 def provider_names() -> list[str]:
     return sorted(PROVIDERS) + sorted(NATIVE_PROVIDERS)
+
+
+class PaidModelBlocked(RuntimeError):
+    """Raised before a request that would cost money."""
+
+
+def ensure_free(provider: str, model: str, allow_paid: bool) -> None:
+    """Refuse to call a paid OpenRouter model unless explicitly allowed.
+
+    OpenRouter marks zero-cost models with a `:free` suffix, so the check is
+    exact there. Other providers don't encode price in the model id, so their
+    own free tiers are the only safeguard.
+    """
+    if allow_paid or provider != "openrouter":
+        return
+    if not model.endswith(":free"):
+        raise PaidModelBlocked(
+            f"Refusing to call OpenRouter model {model!r}: it is not a ':free' model "
+            "and would be billed. Pick a free model, or set ALLOW_PAID_MODELS=true "
+            "in .env if you really mean to spend credit."
+        )
 
 
 class Settings(BaseSettings):
@@ -111,6 +146,13 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434/v1"
     ollama_model: str = "phi4-mini"
     ollama_embedding_model: str = "nomic-embed-text"
+
+    # Guard against accidentally billing an OpenRouter key.
+    allow_paid_models: bool = False
+
+    # Cosine similarity above which two cards count as duplicates.
+    # 0 means "use the embedding model's own default" (see PROVIDERS).
+    semantic_threshold: float = 0.0
 
     # --- pipeline ---
     # Live Anki collection. The pipeline only ever reads a snapshot of it.
@@ -185,11 +227,13 @@ class Settings(BaseSettings):
                 "base_url": None,
                 "api_key": self.google_api_key,
                 "model": self.embedding_model_name or self.embedding_model,
+                "threshold": self.semantic_threshold or DEFAULT_SEMANTIC_THRESHOLD,
             }
 
         preset = PROVIDERS.get(name)
         if not preset or not preset.get("embedding_model"):
-            return {"provider": None, "base_url": None, "api_key": "", "model": ""}
+            return {"provider": None, "base_url": None, "api_key": "", "model": "",
+                    "threshold": DEFAULT_SEMANTIC_THRESHOLD}
 
         if name == "ollama":
             base_url = self.embedding_base_url or self.ollama_base_url
@@ -207,6 +251,9 @@ class Settings(BaseSettings):
             "base_url": base_url,
             "api_key": api_key or ("ollama" if not preset["needs_key"] else ""),
             "model": model,
+            "threshold": (self.semantic_threshold
+                          or preset.get("embedding_threshold")
+                          or DEFAULT_SEMANTIC_THRESHOLD),
         }
 
 

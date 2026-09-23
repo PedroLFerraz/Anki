@@ -35,8 +35,25 @@ def test_embeddings_stay_on_provider_that_supports_them():
     assert _s(llm_provider="nvidia").resolve_embedding()["provider"] == "nvidia"
 
 
+def test_openrouter_serves_both_on_one_key():
+    """OpenRouter has a free embeddings endpoint, so it needs no Ollama sidecar."""
+    s = _s(llm_provider="openrouter", llm_api_key="k")
+    emb = s.resolve_embedding()
+    assert emb["provider"] == "openrouter"
+    assert emb["model"] == PROVIDERS["openrouter"]["embedding_model"]
+    assert emb["api_key"] == "k"          # inherited from the chat provider
+
+
 def test_embeddings_none_for_unsupported_explicit_choice():
     assert _s(embedding_provider="groq").resolve_embedding()["provider"] is None
+
+
+def test_threshold_comes_from_the_embedding_model():
+    """Similarity scales differ per model, so the threshold travels with it."""
+    assert _s(llm_provider="ollama").resolve_embedding()["threshold"] == 0.90
+    assert _s(llm_provider="openrouter", llm_api_key="k").resolve_embedding()["threshold"] == 0.60
+    assert _s(llm_provider="openrouter", llm_api_key="k",
+              semantic_threshold=0.75).resolve_embedding()["threshold"] == 0.75
 
 
 @pytest.fixture

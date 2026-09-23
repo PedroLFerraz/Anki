@@ -21,14 +21,13 @@ from datetime import date
 import numpy as np
 
 from ankigen import llm
-from ankigen.config import settings
+from ankigen.config import ensure_free, settings
 from ankigen.ingest import content_hash
 from ankigen.targeting import in_deck
 
 logger = logging.getLogger(__name__)
 
 FUZZY_THRESHOLD = 0.85
-SEMANTIC_THRESHOLD = 0.90
 BATCH = 64
 _ARTICLES = ("the ", "a ", "an ", "la ", "le ", "el ", "der ", "die ", "das ")
 
@@ -55,11 +54,13 @@ class Embedder:
         self.wh = wh
         self.cfg = settings.resolve_embedding()
         self.model = self.cfg["model"] or ""
+        self.threshold = self.cfg.get("threshold") or 0.90
         self.available = bool(self.cfg["provider"])
         self.error: str | None = None if self.available else "no embedding provider configured"
         self.embedded = 0
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        ensure_free(self.cfg["provider"], self.model, settings.allow_paid_models)
         if self.cfg["provider"] == "gemini":
             client = llm._get_gemini_client()
             result = client.models.embed_content(model=self.model, contents=texts)
@@ -133,6 +134,7 @@ def run(wh, run_date: date, use_embeddings: bool = True) -> dict:
         existing_by_deck[deck] = pool
 
     embedder = Embedder(wh) if use_embeddings else None
+    threshold = embedder.threshold if embedder else 0.90
     vectors: dict[str, np.ndarray] = {}
     if embedder and embedder.available:
         texts = {n["content_hash"]: f"{n['front']} {n['back']}"
@@ -160,7 +162,7 @@ def run(wh, run_date: date, use_embeddings: bool = True) -> dict:
                     sims = _normalise([v for _, v in pool_vecs]) @ (card_vec / (np.linalg.norm(card_vec) or 1.0))
                     j = int(np.argmax(sims))
                     best = float(sims[j])
-                    if best >= SEMANTIC_THRESHOLD:
+                    if best >= threshold:
                         is_dup = True
                         reason = f"semantic {best:.2f}: {pool_vecs[j][0]['front'][:80]}"
 
@@ -179,6 +181,7 @@ def run(wh, run_date: date, use_embeddings: bool = True) -> dict:
         "duplicates": dups,
         "kept": len(rows) - dups,
         "semantic": bool(embedder and embedder.available),
+        "threshold": threshold,
         "embedded_now": embedder.embedded if embedder else 0,
         "embedding_error": embedder.error if embedder else "disabled",
     }

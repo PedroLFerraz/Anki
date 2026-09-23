@@ -93,6 +93,51 @@ def test_unrelated_errors_are_not_swallowed(monkeypatch):
         llm._chat_json(client, "m", "prompt")
 
 
+def test_error_inside_a_200_response_is_retried(monkeypatch):
+    """OpenRouter reports provider outages as {"error": ...} with choices=None."""
+    monkeypatch.setattr(llm, "_no_json_mode", set())
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    client = MagicMock()
+
+    bad = MagicMock(choices=None, error={"message": "Upstream error: Service temporarily overloaded"})
+    good = MagicMock()
+    good.choices = [MagicMock(message=MagicMock(content='{"ok": true}'))]
+    good.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
+    good.error = None
+    client.chat.completions.create.side_effect = [bad, good]
+    monkeypatch.setattr(llm, "_get_openai_client", lambda *a: client)
+
+    assert llm.call_json("p").data == {"ok": True}      # retried, not a TypeError
+
+
+def test_provider_error_detection():
+    assert llm._provider_error(MagicMock(choices=None, error={"message": "boom"})) == "boom"
+    assert llm._provider_error(MagicMock(choices=[], error=None)) == "provider returned no choices"
+    ok = MagicMock(error=None)
+    ok.choices = [MagicMock()]
+    assert llm._provider_error(ok) is None
+
+
+@pytest.mark.parametrize("msg,retry", [
+    ("429 Rate limit reached", True),
+    ("Service temporarily overloaded", True),
+    ("503 upstream", True),
+    ("401 invalid api key", False),
+    ("model not found", False),
+])
+def test_retryable_classification(msg, retry):
+    assert llm._is_retryable(msg) is retry
+
+
+def test_paid_openrouter_model_is_blocked(monkeypatch):
+    from ankigen.config import PaidModelBlocked, Settings
+    monkeypatch.setattr(llm, "settings",
+                        Settings(_env_file=None, llm_provider="openrouter",
+                                 llm_api_key="k", llm_model="openai/gpt-5"))
+    with pytest.raises(PaidModelBlocked, match="not a ':free' model"):
+        llm.call_json("p")
+
+
 def test_rate_limit_waits_for_groq_hint(monkeypatch):
     waits = []
     monkeypatch.setattr(llm.time, "sleep", waits.append)
@@ -171,8 +216,8 @@ def test_low_score_fails():
 
 def _seed_generated(wh):
     wh.replace_partition("generated_cards", RUN_DATE, generate.GENERATED_COLUMNS, [
-        (RUN_DATE, "u1", "r1", "DS::SQL", "basic", "Is the earth flat?", "Yes.", "{}", "m", 0, 0),
-        (RUN_DATE, "u2", "r1", "DS::SQL", "basic", "What is SQL?", "A query language.", "{}", "m", 0, 0),
+        (RUN_DATE, "u1", "r1", "DS::SQL", "basic", "Is the earth flat?", "Yes.", "{}", "", "m", 0, 0),
+        (RUN_DATE, "u2", "r1", "DS::SQL", "basic", "What is SQL?", "A query language.", "{}", "", "m", 0, 0),
     ])
 
 

@@ -11,7 +11,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from ankigen.config import settings
+from ankigen.config import ensure_free, settings
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,38 @@ _gemini_client = None
 _openai_clients: dict[tuple[str, str], object] = {}
 # Models observed to reject response_format; skip JSON mode for them thereafter.
 _no_json_mode: set[str] = set()
+
+
+class TransientProviderError(RuntimeError):
+    """A provider hiccup worth retrying (overloaded, rate limited, 5xx)."""
+
+
+_RETRYABLE = ("429", "rate limit", "overload", "temporarily", "timeout",
+              "502", "503", "504", "resource_exhausted")
+
+
+def _is_retryable(message: str) -> bool:
+    msg = message.lower()
+    return any(token in msg for token in _RETRYABLE)
+
+
+def _provider_error(response) -> str | None:
+    """Aggregators can report failures *inside* a 200 response.
+
+    OpenRouter returns {"error": {...}} with no `choices`, which the OpenAI SDK
+    surfaces as choices=None. Without this check that became a TypeError deep in
+    the parsing code instead of a retry.
+    """
+    if getattr(response, "choices", None):
+        return None                      # a usable reply; nothing to report
+
+    err = getattr(response, "error", None)
+    extra = getattr(response, "model_extra", None)
+    if err is None and isinstance(extra, dict):
+        err = extra.get("error")
+    if isinstance(err, dict) and err.get("message"):
+        return str(err["message"])
+    return "provider returned no choices"
 
 
 @dataclass
@@ -106,7 +138,11 @@ def _chat_json(client, model: str, prompt: str) -> tuple[str, int, int]:
             response = client.chat.completions.create(
                 model=model, messages=messages, response_format={"type": "json_object"},
             )
+            if (problem := _provider_error(response)):
+                raise TransientProviderError(problem)
             return (response.choices[0].message.content or "", *_usage(response))
+        except TransientProviderError:
+            raise
         except Exception as e:
             if not _looks_like_json_mode_rejection(e):
                 raise
@@ -114,12 +150,15 @@ def _chat_json(client, model: str, prompt: str) -> tuple[str, int, int]:
             _no_json_mode.add(model)
 
     response = client.chat.completions.create(model=model, messages=messages)
+    if (problem := _provider_error(response)):
+        raise TransientProviderError(problem)
     return (extract_json(response.choices[0].message.content or ""), *_usage(response))
 
 
 def call_json(prompt: str, max_retries: int = 3) -> LLMResult:
     """One JSON completion, with retries on rate limits and malformed JSON."""
     cfg = settings.resolve_llm()
+    ensure_free(cfg["provider"], cfg["model"], settings.allow_paid_models)
     for attempt in range(max_retries):
         try:
             if cfg["provider"] == "gemini":
@@ -146,11 +185,11 @@ def call_json(prompt: str, max_retries: int = 3) -> LLMResult:
                 raise
         except Exception as e:
             msg = str(e)
-            if ("429" in msg or "RESOURCE_EXHAUSTED" in msg or "rate limit" in msg.lower()) \
-                    and attempt < max_retries - 1:
+            if _is_retryable(msg) and attempt < max_retries - 1:
                 match = re.search(r"(?:retryDelay|try again in)\D*?(\d+(?:\.\d+)?)s", msg)
-                wait = float(match.group(1)) + 2 if match else 20 * (attempt + 1)
-                logger.info("Rate limited; waiting %.0fs (attempt %d/%d)", wait, attempt + 1, max_retries)
+                wait = float(match.group(1)) + 2 if match else 5 * (attempt + 1)
+                logger.info("Provider busy (%s); waiting %.0fs (attempt %d/%d)",
+                            msg[:70], wait, attempt + 1, max_retries)
                 time.sleep(wait)
             else:
                 raise
