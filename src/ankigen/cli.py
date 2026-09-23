@@ -38,8 +38,14 @@ def _setup(verbose: bool = typer.Option(False, "--verbose", "-v", help="Debug lo
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    for noisy in ("httpx", "openai", "urllib3"):
+    for noisy in ("httpx", "openai", "urllib3", "primp", "google_genai"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    # google-genai narrates its automatic function calling on the *root*
+    # logger, two lines per request, which buries the pipeline's own output.
+    logging.getLogger().addFilter(
+        lambda record: not str(record.getMessage()).startswith("AFC ")
+    )
 
 
 def _date(value: Optional[str]) -> date:
@@ -193,6 +199,67 @@ def sync_collection(
 
     typer.echo(f"{dest}  {size / 1e6:.1f} MB" + (f"  (was {before / 1e6:.1f} MB)" if before else ""))
     typer.echo(f"\nCommit it:\n  git add {dest} && git commit -m \"collection: refresh\" && git push")
+
+
+@app.command("audit-images")
+def audit_images(
+    limit: int = typer.Option(0, "--limit", help="Check at most this many notes (0 = all)."),
+):
+    """Look at the pictures already on your AnkiGen cards and name the bad ones.
+
+    Cards made before the images stage started checking its results carry
+    whatever the search returned — a card about S3's flat namespace got a stock
+    photo of a basketball player, and one about deferrable operators got a
+    duck. This reads the collection, never writes to it, and prints an Anki
+    search that selects the notes worth fixing.
+    """
+    import re
+    import sqlite3
+
+    from ankigen import llm
+    from ankigen.ingest import FIELD_SEP, snapshot, strip_html
+
+    collection = Path(settings.anki_collection_path)
+    media = collection.parent / "collection.media"
+    snap = snapshot(collection, Path(settings.data_dir) / "raw" / "_audit" / "collection.anki2")
+
+    con = sqlite3.connect(f"{snap.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        rows = con.execute(
+            "SELECT id, flds FROM notes WHERE tags LIKE '%ankigen%' AND flds LIKE '%<img%'"
+        ).fetchall()
+    finally:
+        con.close()
+    if limit:
+        rows = rows[:limit]
+
+    checker = settings.resolve_verify()
+    bad, checked, missing = [], 0, 0
+    typer.echo(f"\nChecking {len(rows)} illustrated card(s) with {checker['model']}\n")
+    for nid, flds in rows:
+        names = re.findall(r'<img src="([^"]+)"', flds)
+        path = media / names[0] if names else None
+        if not path or not path.exists():
+            missing += 1
+            continue
+        card = strip_html(flds.replace("", " — "))[:400]
+        query = re.sub(r"_[0-9a-f]{8}\.jpg$", "", path.name).replace("_", " ")
+        try:
+            keep, shows = llm.check_image(path.read_bytes(), card, query, cfg=checker)
+        except Exception as e:
+            typer.echo(f"  stopped after {checked}: {str(e)[:90]}")
+            break
+        checked += 1
+        typer.echo(f"  {'keep  ' if keep else 'REMOVE'}  {shows[:52]:<52} {card[:46]}")
+        if not keep:
+            bad.append(nid)
+
+    typer.echo(f"\n{checked} checked, {len(bad)} worth removing"
+               + (f", {missing} image file(s) missing" if missing else ""))
+    if bad:
+        typer.echo("\nPaste this into Anki's browser to select them:")
+        typer.echo("  nid:" + ",".join(str(n) for n in bad))
+        typer.echo("\nThen edit the notes to drop the image, or delete the cards outright.")
 
 
 @app.command()
