@@ -106,6 +106,17 @@ def test_fallback_still_captures_the_wal(make_collection, tmp_path, monkeypatch)
         live.close()
 
 
+def test_snapshot_leaves_one_file_behind(make_collection, tmp_path, monkeypatch):
+    """The copy path used to leave -wal, -shm and its staging file next to the
+    snapshot, so what should be one file was four — and they got committed."""
+    import time as _time
+
+    path = make_collection(wal=True)
+    monkeypatch.setattr(ingest, "_backup", lambda *a: _time.sleep(30))   # force the copy path
+    snap = ingest.snapshot(path, tmp_path / "snap" / "c.anki2", timeout_s=0.3)
+    assert [p.name for p in sorted(snap.parent.iterdir())] == ["c.anki2"]
+
+
 def test_backup_within_reports_failure_rather_than_raising(tmp_path, monkeypatch):
     def boom(*a):
         raise sqlite3.OperationalError("database is locked")

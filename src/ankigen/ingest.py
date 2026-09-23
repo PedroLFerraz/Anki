@@ -132,6 +132,26 @@ def _copy_with_wal(collection: Path, dest: Path) -> None:
         con.close()
 
 
+def _flatten(dest: Path) -> None:
+    """Turn the snapshot into a single self-contained file.
+
+    A copy of a WAL database is still a WAL database, so every read of it
+    recreates `-wal` and `-shm` beside it and the snapshot becomes three files
+    that have to travel together — awkward when one of them gets committed to
+    a repo. Switching the copy's journal mode leaves one file that stays one
+    file. The live collection is untouched; this only ever runs on the copy.
+    """
+    con = sqlite3.connect(dest)
+    try:
+        con.execute("PRAGMA journal_mode=DELETE")
+        con.commit()
+    finally:
+        con.close()
+    for suffix in ("-wal", "-shm"):
+        with suppress(OSError):
+            dest.with_name(dest.name + suffix).unlink(missing_ok=True)
+
+
 def _sanity_check(dest: Path) -> int:
     con = sqlite3.connect(f"{dest.resolve().as_uri()}?mode=ro", uri=True)
     try:
@@ -167,13 +187,20 @@ def snapshot(collection: str | Path, dest: str | Path, timeout_s: float = 10.0) 
     if _backup_within(collection, staging, timeout_s):
         try:
             os.replace(staging, dest)
+            _flatten(dest)
             return dest
         except OSError as e:
             logger.info("Could not promote the backup (%s); copying instead.", e)
 
+    # The backup thread may still hold its handle, so this can fail on Windows;
+    # it is tidiness, not correctness, and the next run overwrites it anyway.
+    with suppress(OSError):
+        staging.unlink(missing_ok=True)
+
     try:
         _copy_with_wal(collection, dest)
         notes = _sanity_check(dest)
+        _flatten(dest)
     except Exception as e:
         raise CollectionLocked(
             f"Could not read the Anki collection at {collection}: {e}. "

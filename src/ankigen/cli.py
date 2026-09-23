@@ -5,12 +5,16 @@ import json
 import logging
 import sys
 from datetime import date
+from pathlib import Path
 from typing import Optional
 
 import typer
 
 from ankigen import pipeline
 from ankigen.config import NATIVE_PROVIDERS, PROVIDERS, settings
+
+# The copy the scheduled run reads, since GitHub's runners cannot see this machine.
+COLLECTION_IN_REPO = "collection/collection.anki2"
 
 app = typer.Typer(
     add_completion=False,
@@ -168,6 +172,27 @@ def report(run_date: Optional[str] = DateOpt):
         for r in rep["dropped"]:
             typer.echo(f"  [{r['outcome'].removeprefix('dropped_')}] {r['front'][:70]}\n      -> {r['reason']}")
     typer.echo(f"\nPackage: {rep['apkg'] or '(none)'}")
+
+
+@app.command("sync-collection")
+def sync_collection(
+    to: str = typer.Option(COLLECTION_IN_REPO, "--to", help="Where to write the copy."),
+):
+    """Copy the live Anki collection into the repo, for the scheduled run.
+
+    GitHub's runners have no access to this machine, so the collection they
+    read is whatever was last committed. Run this after a heavy study session
+    and push, and the next run sees your current cards and review history.
+    """
+    from ankigen.ingest import snapshot
+
+    dest = Path(to)
+    before = dest.stat().st_size if dest.exists() else 0
+    snapshot(settings.anki_collection_path, dest)
+    size = dest.stat().st_size
+
+    typer.echo(f"{dest}  {size / 1e6:.1f} MB" + (f"  (was {before / 1e6:.1f} MB)" if before else ""))
+    typer.echo(f"\nCommit it:\n  git add {dest} && git commit -m \"collection: refresh\" && git push")
 
 
 @app.command()

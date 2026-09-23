@@ -46,3 +46,7 @@ android/local.properties
 # Python build output
 /build/
 /dist/
+
+# Snapshot staging file. Windows will not let us delete it while the
+# abandoned backup thread still holds its handle, so it lingers at 0 bytes.
+*.backup-tmp

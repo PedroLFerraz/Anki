@@ -4,8 +4,8 @@
 # the pipeline needs is either fetched here or cached:
 #
 #   code        cloned from this repo
-#   collection  cloned from a PRIVATE repo (it is your personal data, and this
-#               repo is public) — see docs/GITHUB_ACTIONS.md for the setup
+#   collection  committed at collection/collection.anki2, refreshed with
+#               `ankigen sync-collection` — the runner cannot see your machine
 #   embeddings  computed in-process by fastembed; there is no Ollama here
 #   warehouse   restored from the Actions cache, saved again at the end
 #   the cards   uploaded as a workflow artifact for you to download
@@ -34,30 +34,22 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Check the setup is complete
-        env:
-          COLLECTION_REPO: ${{ secrets.COLLECTION_REPO }}
-          COLLECTION_TOKEN: ${{ secrets.COLLECTION_TOKEN }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-        run: |
-          missing=""
-          [ -z "$COLLECTION_REPO" ] && missing="$missing COLLECTION_REPO"
-          [ -z "$COLLECTION_TOKEN" ] && missing="$missing COLLECTION_TOKEN"
-          [ -z "$GOOGLE_API_KEY" ] && missing="$missing GOOGLE_API_KEY"
-          if [ -n "$missing" ]; then
-            echo "::error::Missing repository secrets:$missing"
-            echo "See docs/GITHUB_ACTIONS.md for what each one is and how to add it."
-            exit 1
-          fi
-
       - uses: actions/checkout@v4
 
-      - name: Fetch the Anki collection
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ secrets.COLLECTION_REPO }}
-          token: ${{ secrets.COLLECTION_TOKEN }}
-          path: private
+      - name: Check the setup is complete
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          if [ -z "$GOOGLE_API_KEY" ]; then
+            echo "::error::Missing repository secret GOOGLE_API_KEY."
+            echo "See docs/GITHUB_ACTIONS.md."
+            exit 1
+          fi
+          if [ ! -f collection/collection.anki2 ]; then
+            echo "::error::No collection committed at collection/collection.anki2."
+            echo "Run 'ankigen sync-collection' locally, then commit and push it."
+            exit 1
+          fi
 
       - uses: actions/setup-python@v5
         with:
@@ -85,7 +77,7 @@ jobs:
 
       - name: Run the pipeline
         env:
-          ANKI_COLLECTION_PATH: private/collection.anki2
+          ANKI_COLLECTION_PATH: collection/collection.anki2
           ANKIGEN_PROFILE: profiles/default.yaml
           DATA_DIR: data
           EMBEDDING_PROVIDER: fastembed
