@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import random
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -28,6 +29,9 @@ logger = logging.getLogger(__name__)
 MAX_WIDTH = 800
 MIN_SOURCE_WIDTH = 300
 TIMEOUT = 15
+# Roughly three minutes of patience per query, spread over six tries.
+DDG_ATTEMPTS = 6
+DDG_BACKOFF_CAP = 60
 USER_AGENT = "AnkiGen/2.1 (personal flashcard generator)"
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 
@@ -47,26 +51,75 @@ class ImageResult:
 
 # ----------------------------------------------------------------- search
 
-def search_duckduckgo(query: str, limit: int = 5) -> list[str]:
+def _width(value) -> int:
+    """`ddgs` falls back to other engines when DuckDuckGo itself fails, and they
+    do not agree on the type of `width`: Bing reports it as a string, which once
+    made the comparison below raise and threw away every result."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def search_duckduckgo(query: str, limit: int = 5, attempts: int = DDG_ATTEMPTS) -> list[str]:
+    """Image URLs for a query, retried patiently.
+
+    This is by far the better source, so it is worth waiting for: a run is a
+    daily batch with nobody watching, and a minute of backoff costs nothing
+    against coming back with no picture. Every failure is retried, not only
+    rate limits — the search fails in several ways (the engine erroring,
+    falling back to another engine, or simply answering with nothing) and none
+    of them mean the next attempt will fail too.
+    """
     from ddgs import DDGS
 
-    for attempt in range(3):
+    for attempt in range(attempts):
         try:
             with DDGS() as ddgs:
                 results = list(ddgs.images(query, max_results=limit))
-            return [
+            urls = [
                 r["image"] for r in results
-                if r.get("image") and (r.get("width") or 0) >= MIN_SOURCE_WIDTH
+                if r.get("image") and _width(r.get("width")) >= MIN_SOURCE_WIDTH
             ]
+            if urls:
+                return urls
+            reason = "no results"
         except Exception as e:
-            if "ratelimit" in str(e).lower() and attempt < 2:
-                wait = 5 * (attempt + 1)
-                logger.info("DuckDuckGo rate limited; waiting %ds", wait)
-                time.sleep(wait)
-                continue
-            logger.info("DuckDuckGo search failed for %r: %s", query, e)
+            reason = str(e)
+
+        if attempt == attempts - 1:
+            logger.info("DuckDuckGo gave nothing for %r after %d attempts (%s)",
+                        query, attempts, reason)
             return []
+        # Jittered, so parallel workers do not retry in lockstep and look
+        # even more like a bot than they already do.
+        wait = min(DDG_BACKOFF_CAP, 3 * 2 ** attempt) * (0.7 + random.random() * 0.6)
+        logger.info("DuckDuckGo: %s for %r; retrying in %.0fs (%d/%d)",
+                    reason[:70], query, wait, attempt + 1, attempts)
+        time.sleep(wait)
     return []
+
+
+# Words that say what kind of picture is wanted rather than what it is of.
+# They are in nearly every query, so they cannot show that a result is relevant.
+_GENERIC = frozenset("diagram chart graph illustration image picture photo "
+                     "example overview architecture ui screenshot icon".split())
+
+
+def _is_relevant(title: str, query: str) -> bool:
+    """Does a Commons filename actually have to do with the query?
+
+    Commons full-text search reads file *descriptions*, so it answers every
+    query with something: "data catalogue ui" came back with a naval ensign
+    photographed for a museum catalogue. Requiring the subject words in the
+    filename is crude, but an unrelated picture on a card is worse than none.
+    """
+    subject = {w for w in re.findall(r"[a-z0-9]+", query.lower())
+               if len(w) > 2 and w not in _GENERIC}
+    if not subject:
+        return False
+    hits = sum(w in title.lower() for w in subject)
+    return hits >= min(2, len(subject))
 
 
 def search_wikimedia(query: str, limit: int = 5) -> list[str]:
@@ -90,8 +143,12 @@ def search_wikimedia(query: str, limit: int = 5) -> list[str]:
         info = (page.get("imageinfo") or [{}])[0]
         # thumburl is already resized; falling back to the full-size original.
         url = info.get("thumburl") or info.get("url")
-        if url and (info.get("width") or MIN_SOURCE_WIDTH) >= MIN_SOURCE_WIDTH:
-            urls.append(url)
+        if not url or _width(info.get("width") or MIN_SOURCE_WIDTH) < MIN_SOURCE_WIDTH:
+            continue
+        if not _is_relevant(page.get("title", ""), query):
+            logger.debug("Wikimedia: dropping %r for %r", page.get("title"), query)
+            continue
+        urls.append(url)
     return urls
 
 

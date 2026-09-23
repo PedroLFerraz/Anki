@@ -90,15 +90,88 @@ def test_both_sources_failing_is_recorded_not_raised(tmp_path, monkeypatch):
 
 
 def test_wikimedia_parses_the_api_shape(monkeypatch):
-    payload = {"query": {"pages": {"1": {"imageinfo": [{"thumburl": "https://c/thumb.jpg", "width": 800}]},
-                                   "2": {"imageinfo": [{"url": "https://c/tiny.jpg", "width": 50}]}}}}
+    payload = {"query": {"pages": {
+        "1": {"title": "File:Kubernetes pod lifecycle.png",
+              "imageinfo": [{"thumburl": "https://c/thumb.jpg", "width": 800}]},
+        "2": {"title": "File:Kubernetes pod icon.png",
+              "imageinfo": [{"url": "https://c/tiny.jpg", "width": 50}]}}}}
 
     class R:
         def raise_for_status(self): pass
         def json(self): return payload
 
     monkeypatch.setattr(images.requests, "get", lambda *a, **k: R())
-    assert images.search_wikimedia("q") == ["https://c/thumb.jpg"]   # too-small one dropped
+    got = images.search_wikimedia("kubernetes pod lifecycle")
+    assert got == ["https://c/thumb.jpg"]                   # too-small one dropped
+
+
+def test_wikimedia_results_unrelated_to_the_query_are_dropped(monkeypatch):
+    """Commons searches descriptions, so it answers everything: "data catalogue
+    ui" once came back with a naval ensign photographed for a museum catalogue."""
+    payload = {"query": {"pages": {"1": {
+        "title": "File:White Ensign of the Royal Navy.jpg",
+        "imageinfo": [{"thumburl": "https://c/ensign.jpg", "width": 800}]}}}}
+
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return payload
+
+    monkeypatch.setattr(images.requests, "get", lambda *a, **k: R())
+    assert images.search_wikimedia("data catalogue ui") == []
+
+
+# ---------------------------------------------------------------- duckduckgo
+
+class _FakeDDGS:
+    """Stands in for ddgs.DDGS. `script` is one entry per call: an exception to
+    raise, or a list of result dicts to return."""
+
+    script: list = []
+    calls = 0
+
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+    def images(self, query, max_results=5):
+        step = type(self).script[min(type(self).calls, len(type(self).script) - 1)]
+        type(self).calls += 1
+        if isinstance(step, Exception):
+            raise step
+        return step
+
+
+@pytest.fixture
+def ddg(monkeypatch):
+    monkeypatch.setattr("ddgs.DDGS", _FakeDDGS)
+    monkeypatch.setattr(images.time, "sleep", lambda s: None)    # no real backoff in tests
+    _FakeDDGS.script, _FakeDDGS.calls = [], 0
+    return _FakeDDGS
+
+
+def test_duckduckgo_keeps_trying_until_it_answers(ddg):
+    """The search fails in several ways and none of them are permanent, so a
+    daily batch waits rather than giving up on the better source."""
+    ddg.script = [
+        RuntimeError("RequestError: malformed headers"),
+        [],                                                      # engine answered with nothing
+        [{"image": "https://ddg/good.png", "width": 900}],
+    ]
+    assert images.search_duckduckgo("kubernetes control plane") == ["https://ddg/good.png"]
+    assert ddg.calls == 3
+
+
+def test_duckduckgo_gives_up_after_its_last_attempt(ddg):
+    ddg.script = [RuntimeError("ratelimit")]
+    assert images.search_duckduckgo("anything", attempts=4) == []
+    assert ddg.calls == 4
+
+
+def test_width_reported_as_a_string_is_still_usable(ddg):
+    """ddgs falls back to other engines, and Bing reports width as a string —
+    comparing it raised, which quietly threw away every result."""
+    ddg.script = [[{"image": "https://bing/x.png", "width": "900"},
+                   {"image": "https://bing/small.png", "width": "80"}]]
+    assert images.search_duckduckgo("docker layers") == ["https://bing/x.png"]
 
 
 def test_one_failing_job_does_not_sink_the_batch(tmp_path, monkeypatch):
