@@ -48,7 +48,7 @@ jobs:
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           LLM_PROVIDER: gemini
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3-flash-preview,gemma-4-31b-it' }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash' }}
           ANKIGEN_PROFILE: profiles/default.yaml
           DECK: ${{ inputs.deck }}
           ABOUT: ${{ inputs.about }}

@@ -171,6 +171,15 @@ class Settings(BaseSettings):
     # retires ids without warning (2.5-flash now 404s for new keys); the
     # current list is at models.list(), and `ankigen providers` surfaces it.
     gemini_model: str = "gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash"
+    # Always tried after the chain above, whatever it is set to: models with
+    # daily allowances of their own, for the days the flash models are all
+    # busy or spent — which on the first day of manual runs was by 11:00 UTC.
+    # Kept apart from GEMINI_MODEL so that setting a preference order (a CI
+    # variable does) cannot quietly remove the safety net. Empty turns it off.
+    gemini_fallback_models: str = "gemini-3-flash-preview,gemma-4-31b-it"
+    # The checker's, and deliberately not the writer's: a card should not be
+    # checked by the model that wrote it.
+    verify_fallback_models: str = "gemma-4-26b-a4b-it"
     embedding_model: str = "gemini-embedding-001"
 
     # Retained so existing .env files and the Ollama defaults keep working.
@@ -218,6 +227,7 @@ class Settings(BaseSettings):
 
         if name in NATIVE_PROVIDERS:
             chain = model_chain(self.gemini_model)
+            chain += [m for m in model_chain(self.gemini_fallback_models) if m not in chain]
             return {
                 "provider": name,
                 "base_url": None,
@@ -265,6 +275,7 @@ class Settings(BaseSettings):
             "llm_provider": self.verify_provider or self.llm_provider,
             "llm_model": "" if self.verify_provider else self.verify_model,
             "gemini_model": self.verify_model or self.gemini_model,
+            "gemini_fallback_models": self.verify_fallback_models,
         })
         cfg = overridden.resolve_llm()
         if self.verify_model and self.verify_provider:

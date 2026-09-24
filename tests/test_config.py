@@ -110,3 +110,33 @@ def test_hosted_probe_sends_bearer_token(use):
     with patch("requests.get") as get:
         assert llm.check_connection() is None
     assert get.call_args[1]["headers"] == {"Authorization": "Bearer secret"}
+
+
+# ---------------------------------------------------------------- backup models
+
+def test_backup_models_follow_whatever_chain_is_set():
+    """A repository variable set the chain to four flash models, and the
+    backups written into the workflow's default never ran."""
+    cfg = _s(llm_provider="gemini", google_api_key="k",
+             gemini_model="gemini-3.8-flash,gemini-3.5-flash").resolve_llm()
+    assert cfg["models"] == ["gemini-3.8-flash", "gemini-3.5-flash",
+                             "gemini-3-flash-preview", "gemma-4-31b-it"]
+
+
+def test_a_backup_already_in_the_chain_is_not_tried_twice():
+    cfg = _s(llm_provider="gemini", google_api_key="k",
+             gemini_model="gemma-4-31b-it,gemini-3.5-flash").resolve_llm()
+    assert cfg["models"] == ["gemma-4-31b-it", "gemini-3.5-flash", "gemini-3-flash-preview"]
+
+
+def test_backups_can_be_turned_off():
+    cfg = _s(llm_provider="gemini", google_api_key="k", gemini_model="gemini-3.5-flash",
+             gemini_fallback_models="").resolve_llm()
+    assert cfg["models"] == ["gemini-3.5-flash"]
+
+
+def test_the_checker_has_its_own_backup_not_the_writer_s():
+    cfg = _s(llm_provider="gemini", google_api_key="k", gemini_model="gemini-3.5-flash",
+             verify_model="gemini-3.5-flash-lite").resolve_verify()
+    assert cfg["models"] == ["gemini-3.5-flash-lite", "gemma-4-26b-a4b-it"]
+    assert "gemma-4-31b-it" not in cfg["models"]
