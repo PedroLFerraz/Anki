@@ -1,0 +1,82 @@
+# Start a new subject from anywhere, the GitHub app on a phone included.
+#
+# The model plans the deck's topics in the same shape as the decks already in
+# the profile, and the change arrives as a branch with a pull request — or,
+# where the repository does not let workflows open pull requests, a one-tap
+# link to open it. Nothing joins the daily run until it is merged, and the
+# topics can be edited on the branch first.
+name: add a theme
+
+on:
+  workflow_dispatch:
+    inputs:
+      deck:
+        description: 'The new deck, e.g. "Data Platform::Spark"'
+        required: true
+        type: string
+      about:
+        description: "What it should cover, in a sentence (optional)"
+        required: false
+        type: string
+      quota:
+        description: "Cards a day"
+        required: false
+        type: string
+        default: "3"
+
+permissions:
+  contents: write         # to push the proposal's branch
+  pull-requests: write    # to open the pull request, where the repository allows it
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install ".[gemini]"
+
+      # Inputs arrive through the environment, never pasted into the script,
+      # so a deck name with quotes in it is only ever a deck name.
+      - name: Plan the deck
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          LLM_PROVIDER: gemini
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3-flash-preview,gemma-4-31b-it' }}
+          ANKIGEN_PROFILE: profiles/default.yaml
+          DECK: ${{ inputs.deck }}
+          ABOUT: ${{ inputs.about }}
+          QUOTA: ${{ inputs.quota }}
+        run: |
+          python -m ankigen add-theme --deck "$DECK" --about "$ABOUT" \
+            --quota "${QUOTA:-3}" --summary proposal.md
+
+      - name: Propose it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DECK: ${{ inputs.deck }}
+        run: |
+          slug=$(printf '%s' "$DECK" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-|-$//g')
+          branch="theme/${slug}-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "feat: add $DECK to the daily cards"
+          git push -u origin "$branch"
+
+          if gh pr create --base master --head "$branch" \
+               --title "Add $DECK to the daily cards" --body-file proposal.md; then
+            echo "Opened a pull request. Review the topics, then merge it." >> "$GITHUB_STEP_SUMMARY"
+          else
+            url="https://github.com/${GITHUB_REPOSITORY}/compare/master...${branch}?expand=1"
+            echo "This repository does not let workflows open pull requests, so" \
+                 "[open it here]($url), review the topics, and merge it." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          cat proposal.md >> "$GITHUB_STEP_SUMMARY"

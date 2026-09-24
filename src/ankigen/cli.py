@@ -342,6 +342,47 @@ def reset(
     typer.echo("imported, search `tag:ankigen` in Anki's browser and delete them.")
 
 
+@app.command("add-theme")
+def add_theme(
+    deck: str = typer.Option(..., "--deck", help='The new deck, e.g. "Data Platform::Spark".'),
+    about: str = typer.Option("", "--about", help="What it should cover, in a sentence."),
+    quota: int = typer.Option(3, "--quota", min=1, max=20, help="Cards a day."),
+    topics: int = typer.Option(16, "--topics", help="How many topics to plan."),
+    card_type: Optional[str] = typer.Option(
+        None, "--card-type", help="basic, cloze or detailed. Blank lets the model choose."
+    ),
+    profile: Optional[str] = ProfileOpt,
+    summary_file: Optional[str] = typer.Option(
+        None, "--summary", help="Also write a Markdown summary here (for a pull request)."
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the plan; change nothing."),
+):
+    """Start a new subject: the model plans its topics, and it joins the profile.
+
+    One request to the model. The deck is appended to the profile as text, so
+    the file's comments survive; review the topics (they run one per day, in
+    order) and edit them freely afterwards.
+    """
+    from ankigen import themes
+    from ankigen.profile import load_profile
+
+    if card_type and card_type not in themes.CARD_TYPES:
+        raise typer.BadParameter(f"--card-type must be one of {', '.join(themes.CARD_TYPES)}.")
+    path = Path(profile or settings.ankigen_profile)
+    target = themes.plan(load_profile(path), deck, about=about, topics=topics, quota=quota,
+                         card_type=card_type)
+    if dry_run:
+        typer.echo(themes.render(target, date.today()))
+        return
+    proposal = themes.add_to_profile(path, target)
+    typer.echo(f"\nAdded to {path}:\n")
+    typer.echo(proposal.block)
+    if proposal.global_quota:
+        typer.echo(f"global_quota raised to {proposal.global_quota} so the new deck gets cards.")
+    if summary_file:
+        Path(summary_file).write_text(themes.summary(proposal, about), encoding="utf-8")
+
+
 @app.command("audit-images")
 def audit_images(
     limit: int = typer.Option(0, "--limit", help="Check at most this many notes (0 = all)."),
