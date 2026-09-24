@@ -120,11 +120,15 @@ def test_the_summary_lists_the_topics_and_the_quota_change(profile_file, planned
 
 
 def test_the_real_profile_can_take_a_new_deck(tmp_path, planned):
-    """The shipped profile must stay appendable: decks last, valid after."""
+    """The shipped profile must stay appendable: decks last, valid after.
+
+    The deck is one no real profile has: this test once used Spark, and
+    failed on the very pull request that proposed adding Spark.
+    """
     from pathlib import Path
     real = Path(__file__).parent.parent / "profiles" / "default.yaml"
     path = tmp_path / "default.yaml"
     path.write_text(real.read_text(encoding="utf-8"), encoding="utf-8")
-    themes.add_to_profile(path, themes.plan(load_profile(path), "Data Platform::Spark"))
-    assert load_profile(path).decks[-1].deck == "Data Platform::Spark"
+    themes.add_to_profile(path, themes.plan(load_profile(path), "Zz Test::Appendability"))
+    assert load_profile(path).decks[-1].deck == "Zz Test::Appendability"
     assert yaml.safe_load(path.read_text(encoding="utf-8"))["decks"][-1]["new_deck"] is True
