@@ -27,8 +27,11 @@ class TransientProviderError(RuntimeError):
     """A provider hiccup worth retrying (overloaded, rate limited, 5xx)."""
 
 
+# A 500 belongs here too: Gemma answered one long prompt with "500 INTERNAL.
+# Internal error encountered.", and read as a real error that ended the whole
+# chain instead of moving on to the next model.
 _RETRYABLE = ("429", "rate limit", "overload", "temporarily", "timeout",
-              "502", "503", "504", "resource_exhausted")
+              "500 internal", "internal error", "502", "503", "504", "resource_exhausted")
 
 # A *daily* cap, as opposed to a per-minute one. Both arrive as 429s and both
 # carry a "retry in 47s" hint, but waiting out a daily quota inside one run is
