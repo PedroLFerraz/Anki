@@ -275,6 +275,9 @@ _OUR_PICTURE = re.compile(
     r'|<div class="ankigen-visual"[^>]*>.*?</div>',
     re.DOTALL,
 )
+# The only pictures removed without a replacement: files this program named,
+# which never reached AnkiWeb and so can never show.
+_BROKEN_PICTURE = re.compile(r'(?:<br>)?<img src="[a-z0-9_]+_[0-9a-f]{8}\.jpg">')
 
 
 def _refresh_picture(col, nid, card_type: str, picture: str) -> bool:
@@ -284,8 +287,14 @@ def _refresh_picture(col, nid, card_type: str, picture: str) -> bool:
     if not field or field not in note.keys():
         return False
     current = note[field]
-    base = _OUR_PICTURE.sub("", current)
-    want = with_picture(card_type, {field: base}, picture)[field] if picture else base
+    if picture:
+        want = with_picture(card_type, {field: _OUR_PICTURE.sub("", current)}, picture)[field]
+    else:
+        # "No picture" is only as current as the warehouse that says it, and
+        # a run on another branch keeps a warehouse of its own: trusting one
+        # here would have stripped the pictures a repair run had just put on
+        # a day's notes. So a working picture stays; a broken one goes.
+        want = _BROKEN_PICTURE.sub("", current)
     if want == current:
         return False
     note[field] = want
