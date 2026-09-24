@@ -279,6 +279,24 @@ def test_a_visual_in_a_shared_field_leaves_your_text_alone(tmp_path):
     col = _Col(existing={guid: {"Text": "t", "Extra": 'my note<div class="ankigen-visual">'
                                                       '<table></table></div>'}})
     card = {"card_uid": "u2", "deck": "DS::SQL", "card_type": "cloze",
-            "fields_json": '{"Text": "t", "Extra": ""}', "tags": [], "image_filename": None}
+            "fields_json": '{"Text": "t", "Extra": ""}', "tags": [], "image_filename": None,
+            "visual_html": '<div class="ankigen-visual"><svg>new</svg></div>'}
     push.push_cards(col, [card], tmp_path)
-    assert col.notes[1].fields["Extra"] == "my note"
+    assert col.notes[1].fields["Extra"] == 'my note<div class="ankigen-visual"><svg>new</svg></div>'
+
+
+def test_a_working_picture_survives_a_warehouse_that_knows_of_none(tmp_path):
+    """A branch run repaired a day's pictures from its own warehouse; pushing
+    the same day from master's older one must not take them back off."""
+    import genanki
+    inline = '<img src="data:image/jpeg;base64,AAAA">'
+    drawn = '<div class="ankigen-visual"><svg></svg></div>'
+    col = _Col(existing={
+        genanki.guid_for("u1"): {"Question": "Q?", "Summary": "S", "Explanation": "E",
+                                 "Image": inline, "Reference": ""},
+        genanki.guid_for("u2"): {"Question": "Q?", "Summary": "S", "Explanation": "E",
+                                 "Image": drawn, "Reference": ""},
+    })
+    result = push.push_cards(col, [_detailed("u1"), _detailed("u2")], tmp_path)
+    assert result.updated == 0 and col.updated == []
+    assert col.notes[1].fields["Image"] == inline and col.notes[2].fields["Image"] == drawn
