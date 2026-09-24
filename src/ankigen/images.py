@@ -34,7 +34,11 @@ TIMEOUT = 15
 # Roughly three minutes of patience per query, spread over six tries.
 DDG_ATTEMPTS = 6
 # How many candidate pictures to actually look at before giving up on a card.
-MAX_CHECKS = 3
+# Three was too few: logos and stock photos take the early slots often enough
+# that a run rejected all four of its images and shipped none. Each look costs
+# one request on a metered free tier, and they come out of the checker's
+# allowance rather than the writer's, so five is affordable.
+MAX_CHECKS = 5
 UNCHECKED = "unchecked"
 DDG_BACKOFF_CAP = 60
 USER_AGENT = "AnkiGen/2.1 (personal flashcard generator)"

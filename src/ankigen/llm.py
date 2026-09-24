@@ -321,6 +321,10 @@ def check_image(image: bytes, card: str, query: str, cfg: dict | None = None) ->
     if cfg["provider"] == "gemini":
         from google.genai import types
         client = _get_gemini_client()
+        if not client:
+            # Without this the failure surfaced as "'NoneType' object has no
+            # attribute 'models'", which sends you looking in the wrong place.
+            raise RuntimeError("No GOOGLE_API_KEY configured, so images cannot be checked.")
         last: Exception | None = None
         for model in chain:
             try:
