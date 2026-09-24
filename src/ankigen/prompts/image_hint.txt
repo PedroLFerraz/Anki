@@ -1,6 +1,13 @@
-
 For "image_query", apply one test to the card: could its answer be drawn as a
 labelled picture — boxes and arrows, a lifecycle, a plot, a physical object? If
-yes, write 2-5 words to search the web for, such as "kubernetes pod lifecycle
-diagram". If the answer is a command, a flag, a default, a definition or a
-rule, there is nothing to draw, so set the field to "".
+yes, write 2-5 words to search the web for. If the answer is a command, a flag,
+a default, a definition or a rule, there is nothing to draw, so set the field
+to "".
+
+Write the query for a search engine, which reads every word literally and
+knows nothing about the deck. Name the technology in full — "Apache Airflow",
+not "Airflow" — and avoid terms that mean something ordinary on their own.
+"airflow pool concurrency" returns photographs of swimming pools; "Apache
+Airflow pool slots diagram" returns the diagram. Prefer naming the thing
+pictured over describing the idea: "kubernetes pod lifecycle diagram" works,
+"why pods are ephemeral" does not.

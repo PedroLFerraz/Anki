@@ -75,7 +75,7 @@ def test_a_one_way_sync_is_refused_rather_than_guessed():
 
 def test_an_ordinary_sync_goes_through():
     assert push.sync(_Col(Response.NORMAL_SYNC), _auth())[0] == "synced"
-    assert push.sync(_Col(Response.NO_CHANGES), _auth())[0] == "already up to date"
+    assert push.sync(_Col(Response.NO_CHANGES), _auth())[0] == "in sync"
 
 
 def test_the_account_s_own_sync_host_is_found_before_transferring(tmp_path, monkeypatch):

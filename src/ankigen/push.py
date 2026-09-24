@@ -149,7 +149,10 @@ def sync(col, auth, media: bool = True) -> tuple[str, object]:
             f"{Path(settings.data_dir) / WORKING_COPY} so the next push starts "
             "from a fresh download."
         )
-    state = {Response.NO_CHANGES: "already up to date",
+    # NO_CHANGES is what the server says once everything has been reconciled,
+    # including changes we just sent — so this describes the state afterwards
+    # rather than claiming nothing happened.
+    state = {Response.NO_CHANGES: "in sync",
              Response.NORMAL_SYNC: "synced"}.get(required, "synced")
     return state, auth
 
