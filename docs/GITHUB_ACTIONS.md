@@ -88,5 +88,7 @@ already made.
 model settings are chains. A run costs roughly ten calls plus one per image
 checked.
 
-**`raw_notes` grows** by a full collection snapshot per run date, about 14MB a
-day. The warehouse wants a retention policy before this has been running long.
+**Snapshots are kept for 14 days.** Each run stores a full snapshot of your
+notes, and only that day's is ever read, so ingest drops the ones older than
+two weeks. Without that the warehouse — which rides in the Actions cache,
+restored and saved every run — grew by megabytes a day, forever.
