@@ -8,9 +8,13 @@ For each card decide:
   alone, without it being ambiguous or having several valid answers?
 - score: 0.0-1.0 overall quality as a study card.
 - issue: if either check fails, one short sentence naming the exact problem.
+- visual_ok: only for a card listed with a Visual (a table or a diagram, given
+  as text). Is every label, number and arrow in it correct, and does it agree
+  with the answer? A wrong visual does not make the card incorrect; it is
+  dropped on its own. Use null when the card has no visual.
 
 CARDS
 $cards
 
 Respond with JSON only, one entry per card, in exactly this shape:
-{"results": [{"index": 1, "correct": true, "answerable": true, "score": 0.9, "issue": ""}]}
+{"results": [{"index": 1, "correct": true, "answerable": true, "score": 0.9, "issue": "", "visual_ok": null}]}

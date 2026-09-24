@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import warnings
 from datetime import date
 from pathlib import Path
 
@@ -46,24 +47,30 @@ def _tag(text: str) -> str:
 
 
 def _with_image(card_type: str, values: dict, filename: str | None) -> dict:
-    """Put the illustration where the note type can show it.
+    """Put the illustration where the note type can show it."""
+    return with_picture(card_type, values, f'<img src="{filename}">' if filename else "")
+
+
+def with_picture(card_type: str, values: dict, picture: str) -> dict:
+    """Put a picture's HTML where the note type shows it: the answer side.
 
     `detailed` has a dedicated Image field. `basic` and `cloze` don't, so the
-    tag is appended to the answer side, which is what Anki renders anyway.
+    picture is appended to the answer or the hint, which Anki renders anyway.
     """
-    if not filename:
+    if not picture:
         return values
-    img = f'<img src="{filename}">'
     values = dict(values)
+    # An <img> sits inline and needs a line break; a drawn visual is a block.
+    sep = "<br>" if picture.startswith("<img") else ""
     if card_type == "detailed":
-        values["Image"] = img
+        values["Image"] = picture
     elif card_type == "cloze":
         # Not .lstrip("<br>"): that strips *characters*, and ate the first
         # letter of any hint beginning with b or r.
         extra = values.get("Extra", "")
-        values["Extra"] = f"{extra}<br>{img}" if extra else img
+        values["Extra"] = f"{extra}{sep}{picture}" if extra else picture
     else:
-        values["Answer"] = f"{values.get('Answer', '')}<br>{img}"
+        values["Answer"] = f"{values.get('Answer', '')}{sep}{picture}"
     return values
 
 
@@ -71,6 +78,9 @@ def build_package(run_date: date, cards: list[dict], profile=None,
                   media_dir: Path | None = None) -> genanki.Package | None:
     if not cards:
         return None
+    # genanki checks field HTML against a list of tags that predates inline
+    # SVG, and warns about every drawn diagram.
+    warnings.filterwarnings("ignore", message="Field contained the following invalid HTML tags")
     models = {t: _model(t) for t in {c["card_type"] for c in cards}}
     decks: dict[str, genanki.Deck] = {}
     media: list[str] = []
@@ -82,7 +92,9 @@ def build_package(run_date: date, cards: list[dict], profile=None,
         values = json.loads(c["fields_json"])
 
         filename = c.get("image_filename")
-        if filename and media_dir and (media_dir / filename).exists():
+        if c.get("visual_html"):
+            values = with_picture(c["card_type"], values, c["visual_html"])
+        elif filename and media_dir and (media_dir / filename).exists():
             values = _with_image(c["card_type"], values, filename)
             media.append(str(media_dir / filename))
         elif filename:
@@ -125,6 +137,7 @@ def run(wh, run_date: date, out_root: str | Path, profile=None,
         "kept": len(kept),
         "apkg": str(apkg) if package else None,
         "images": len(package.media_files) if package else 0,
+        "drawn": sum(1 for c in kept if c.get("visual_html")),
     }
 
 

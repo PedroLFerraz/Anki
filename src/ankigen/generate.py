@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 
-from ankigen import llm
+from ankigen import llm, visuals
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ class Card:
     back: str
     fields: dict = field(default_factory=dict)  # note fields, keyed by card_types field name
     image_query: str = ""   # empty unless the model judged a picture would help
+    visual: dict | None = None  # a table or diagram to draw, see visuals.py
 
 
 def clean_field(text: str) -> str:
@@ -74,7 +75,8 @@ def parse_cards(card_type: str, data: dict) -> list[Card]:
                 logger.warning("Skipping cloze without a valid deletion: %r", text[:60])
                 continue
             plain = CLOZE_PLAIN.sub(r"\1", text)
-            cards.append(Card(plain, text, {"Text": text, "Extra": extra}, image_query(item)))
+            cards.append(Card(plain, text, {"Text": text, "Extra": extra}, image_query(item),
+                              visuals.parse(item.get("visual"))))
 
         elif card_type == "detailed":
             q = clean_field(item.get("question", ""))
@@ -87,7 +89,7 @@ def parse_cards(card_type: str, data: dict) -> list[Card]:
             cards.append(Card(q, summary, {
                 "Question": q, "Summary": summary, "Explanation": explanation or summary,
                 "Image": "", "Reference": "",
-            }, image_query(item)))
+            }, image_query(item), visuals.parse(item.get("visual"))))
 
         else:
             q = clean_field(item.get("question", ""))
@@ -95,7 +97,8 @@ def parse_cards(card_type: str, data: dict) -> list[Card]:
             if len(q) < 5 or len(a) < 2:
                 logger.warning("Skipping low-quality card: Q=%r A=%r", q[:60], a[:40])
                 continue
-            cards.append(Card(q, a, {"Question": q, "Answer": a}, image_query(item)))
+            cards.append(Card(q, a, {"Question": q, "Answer": a}, image_query(item),
+                              visuals.parse(item.get("visual"))))
     return cards
 
 
@@ -128,6 +131,9 @@ GENERATED_COLUMNS = (
     "run_date", "card_uid", "request_id", "deck", "card_type", "front", "back",
     "fields_json", "image_query", "model", "prompt_tokens", "completion_tokens",
 )
+# What this stage writes: the columns above, and the drawn picture if any.
+# Kept apart so rows built without one still fit GENERATED_COLUMNS.
+WRITTEN_COLUMNS = GENERATED_COLUMNS + ("visual_json",)
 
 
 def card_uid(run_date: date, request_id: str, front: str) -> str:
@@ -165,6 +171,7 @@ def run(wh, run_date: date, requests: list[dict]) -> dict:
                 json.dumps(card.fields, ensure_ascii=False), card.image_query,
                 result.model if result else None,
                 p_tok if i == 0 else 0, c_tok if i == 0 else 0,
+                json.dumps(card.visual, ensure_ascii=False) if card.visual else None,
             ))
     # Two requests can land on the same card; keep the first.
     seen, unique = set(), []
@@ -172,7 +179,7 @@ def run(wh, run_date: date, requests: list[dict]) -> dict:
         if r[1] not in seen:
             seen.add(r[1])
             unique.append(r)
-    wh.replace_partition("generated_cards", run_date, GENERATED_COLUMNS, unique)
+    wh.replace_partition("generated_cards", run_date, WRITTEN_COLUMNS, unique)
     if requests and not unique:
         # Downstream stages treat "no cards" as "nothing to do", so without this
         # a run that lost every request to a rate limit finishes green with an
@@ -189,6 +196,7 @@ def run(wh, run_date: date, requests: list[dict]) -> dict:
         "requested": sum(r["n"] for r in requests),
         "failed_requests": failures,
         "with_image_query": sum(1 for r in unique if r[8]),
+        "with_visual": sum(1 for r in unique if r[12]),
         "prompt_tokens": total_prompt,
         "completion_tokens": total_completion,
     }

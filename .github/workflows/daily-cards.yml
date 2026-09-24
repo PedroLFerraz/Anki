@@ -108,6 +108,10 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      # Draws the diagrams the model describes for a card (visuals.py). Without
+      # it those cards fall back to searching the web for a picture.
+      - run: sudo apt-get install -y --no-install-recommends graphviz
+
       # [gemini] pulls google-genai, which is an extra because it is the one
       # provider that does not speak the OpenAI protocol. Without it the run
       # gets all the way to the first request before failing.

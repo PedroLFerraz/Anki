@@ -75,7 +75,8 @@ CREATE TABLE IF NOT EXISTS generated_cards (
     image_query VARCHAR,
     model       VARCHAR,
     prompt_tokens     INTEGER,
-    completion_tokens INTEGER
+    completion_tokens INTEGER,
+    visual_json VARCHAR
 );
 
 CREATE TABLE IF NOT EXISTS verified_cards (
@@ -83,7 +84,8 @@ CREATE TABLE IF NOT EXISTS verified_cards (
     card_uid  VARCHAR NOT NULL,
     passed    BOOLEAN NOT NULL,
     score     DOUBLE,
-    reason    VARCHAR
+    reason    VARCHAR,
+    visual_ok BOOLEAN
 );
 
 CREATE TABLE IF NOT EXISTS dedup_results (
@@ -101,6 +103,16 @@ CREATE TABLE IF NOT EXISTS card_images (
     filename  VARCHAR,
     source    VARCHAR,
     url       VARCHAR,
+    detail    VARCHAR
+);
+
+-- Pictures drawn from the card itself (see visuals.py), as the HTML that goes
+-- in the note.
+CREATE TABLE IF NOT EXISTS card_visuals (
+    run_date  DATE    NOT NULL,
+    card_uid  VARCHAR NOT NULL,
+    kind      VARCHAR,
+    html      VARCHAR,
     detail    VARCHAR
 );
 
@@ -125,8 +137,10 @@ CREATE OR REPLACE VIEW card_outcomes AS
 SELECT
     g.run_date, g.card_uid, g.request_id, g.deck, g.card_type, g.front, g.back,
     g.fields_json, r.reason AS request_reason, r.topic,
-    g.image_query,
+    g.image_query, g.visual_json,
     v.passed AS verify_passed, v.score AS verify_score, v.reason AS verify_reason,
+    v.visual_ok,
+    cv.kind AS visual_kind, cv.html AS visual_html,
     d.is_dup, d.reason AS dup_reason,
     i.filename AS image_filename, i.source AS image_source,
     CASE
@@ -139,7 +153,8 @@ FROM generated_cards g
 JOIN requests r USING (run_date, request_id)
 LEFT JOIN verified_cards v USING (run_date, card_uid)
 LEFT JOIN dedup_results d USING (run_date, card_uid)
-LEFT JOIN card_images   i USING (run_date, card_uid);
+LEFT JOIN card_images   i USING (run_date, card_uid)
+LEFT JOIN card_visuals  cv USING (run_date, card_uid);
 """
 
 
@@ -155,6 +170,12 @@ class Warehouse:
         )
         self.con.execute(
             "ALTER TABLE IF EXISTS card_images ADD COLUMN IF NOT EXISTS url VARCHAR"
+        )
+        self.con.execute(
+            "ALTER TABLE IF EXISTS generated_cards ADD COLUMN IF NOT EXISTS visual_json VARCHAR"
+        )
+        self.con.execute(
+            "ALTER TABLE IF EXISTS verified_cards ADD COLUMN IF NOT EXISTS visual_ok BOOLEAN"
         )
         self.con.execute(SCHEMA)
 

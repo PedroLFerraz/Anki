@@ -211,12 +211,12 @@ def push_cards(col, cards: list[dict], media_dir: Path, deck_for=None) -> PushRe
     decks: set[str] = set()
     for card in cards:
         guid = genanki.guid_for(card["card_uid"])
-        src = _picture_src(card, media_dir)
+        picture = _picture(card, media_dir)
         nid = col.db.scalar("SELECT id FROM notes WHERE guid = ?", guid)
         if nid:
-            if src is not None and _refresh_picture(col, nid, card["card_type"], src):
+            if picture is not None and _refresh_picture(col, nid, card["card_type"], picture):
                 updated += 1
-                pictures += bool(src)
+                pictures += bool(picture)
             else:
                 skipped += 1
             continue
@@ -230,8 +230,8 @@ def push_cards(col, cards: list[dict], media_dir: Path, deck_for=None) -> PushRe
         note.guid = guid
 
         values = json.loads(card["fields_json"])
-        if src:
-            values = _with_image(card["card_type"], values, src)
+        if picture:
+            values = with_picture(card["card_type"], values, picture)
             pictures += 1
 
         for fieldname in CARD_TYPES[card["card_type"]]["fields"]:
@@ -244,14 +244,16 @@ def push_cards(col, cards: list[dict], media_dir: Path, deck_for=None) -> PushRe
     return PushResult(added, skipped, pictures, sorted(decks), updated)
 
 
-def _picture_src(card: dict, media_dir: Path) -> str | None:
-    """What the card's picture should be: an inline `data:` URI, "" for no
-    picture, or None when that cannot be known here.
+def _picture(card: dict, media_dir: Path) -> str | None:
+    """The card's picture as HTML for the note: a drawn visual, or an inline
+    `<img>`; "" for no picture; None when that cannot be known here.
 
     None matters. A push run without the images stage has no downloaded
     files, and reading that as "no picture" would strip every picture from
     the day's notes.
     """
+    if card.get("visual_html"):
+        return card["visual_html"]
     filename = card.get("image_filename")
     if not filename:
         return ""
@@ -260,20 +262,22 @@ def _picture_src(card: dict, media_dir: Path) -> str | None:
         return None
     from ankigen.images import inline_src
 
-    return inline_src(path)
+    return f'<img src="{inline_src(path)}">'
 
 
 # The field each card type carries its picture in, and the pictures this
-# program has put there: inline ones, and files named the way images.py names
-# them — which is what the first pushed notes carry, pointing at files that
-# never reached AnkiWeb.
+# program has put there: drawn visuals, inline images, and files named the way
+# images.py names them — which is what the first pushed notes carry, pointing
+# at files that never reached AnkiWeb.
 PICTURE_FIELD = {"detailed": "Image", "basic": "Answer", "cloze": "Extra"}
 _OUR_PICTURE = re.compile(
     r'(?:<br>)?<img src="(?:data:image/[a-z]+;base64,[A-Za-z0-9+/=]+|[a-z0-9_]+_[0-9a-f]{8}\.jpg)">'
+    r'|<div class="ankigen-visual"[^>]*>.*?</div>',
+    re.DOTALL,
 )
 
 
-def _refresh_picture(col, nid, card_type: str, src: str) -> bool:
+def _refresh_picture(col, nid, card_type: str, picture: str) -> bool:
     """Replace the picture on an existing note. Returns whether it changed."""
     field = PICTURE_FIELD.get(card_type)
     note = col.get_note(nid)
@@ -281,7 +285,7 @@ def _refresh_picture(col, nid, card_type: str, src: str) -> bool:
         return False
     current = note[field]
     base = _OUR_PICTURE.sub("", current)
-    want = _with_image(card_type, {field: base}, src)[field] if src else base
+    want = with_picture(card_type, {field: base}, picture)[field] if picture else base
     if want == current:
         return False
     note[field] = want
@@ -289,8 +293,8 @@ def _refresh_picture(col, nid, card_type: str, src: str) -> bool:
     return True
 
 
-def _with_image(card_type: str, values: dict, src: str) -> dict:
+def with_picture(card_type: str, values: dict, picture: str) -> dict:
     """Same placement the .apkg export uses, so both routes look alike."""
-    from ankigen.export import _with_image as place
+    from ankigen.export import with_picture as place
 
-    return place(card_type, values, src)
+    return place(card_type, values, picture)
