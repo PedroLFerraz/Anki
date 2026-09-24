@@ -498,3 +498,12 @@ def test_a_gemini_model_that_refuses_json_mode_is_asked_again_without_it(monkeyp
     assert result.data == {"cards": []} and calls == [True, False]
     llm._call_one_model("p", {"provider": "gemini"}, "gemma-4-31b-it", 2)
     assert calls == [True, False, False]          # remembered: not asked in JSON mode again
+
+
+def test_a_server_error_falls_through_to_the_next_model(chain, monkeypatch):
+    """Gemma once answered "500 INTERNAL", which ended the chain as if it were
+    a bad request."""
+    seen = _answers(monkeypatch, {"best": RuntimeError(
+        "500 INTERNAL. {'error': {'code': 500, 'message': 'Internal error encountered.'}}")})
+    assert llm.call_json("p", cfg=chain).data == {"ok": "middling"}
+    assert seen == ["best", "middling"]
