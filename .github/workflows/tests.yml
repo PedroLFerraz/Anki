@@ -1,0 +1,22 @@
+# The test suite, on every pull request and every push to master, so a change
+# that breaks the pipeline is caught before the 08:17 run finds it.
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      # [push] brings the anki package, so the sync tests run rather than skip.
+      - run: pip install ".[dev,gemini,push]"
+      - run: python -m pytest -q

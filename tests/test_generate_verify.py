@@ -458,3 +458,23 @@ def test_running_out_everywhere_says_so(chain, monkeypatch):
     _answers(monkeypatch, {m: llm.QuotaExhausted(GEMINI_DAILY_429) for m in chain["models"]})
     with pytest.raises(llm.QuotaExhausted, match="every configured model"):
         llm.call_json("p", cfg=chain)
+
+
+# ---------------------------------------------------------------- answers in the wrong shape
+
+def test_an_image_verdict_wrapped_in_a_list_is_still_read():
+    """`'list' object has no attribute 'get'` once kept an unchecked picture."""
+    assert llm._verdict([{"helps": True, "shows": "a diagram"}]) == (True, "a diagram")
+    assert llm._verdict({"helps": False, "shows": "a logo"}) == (False, "a logo")
+    with pytest.raises(ValueError):
+        llm._verdict("yes")
+
+
+def test_a_bare_list_of_verdicts_is_read_like_the_wrapped_one(wh, monkeypatch):
+    _seed_generated(wh)
+    monkeypatch.setattr(llm, "call_json", lambda *a, **k: llm.LLMResult([
+        {"index": 1, "correct": True, "answerable": True, "score": 0.9},
+        {"index": 2, "correct": False, "answerable": True, "score": 0.9, "issue": "wrong"},
+    ], "m"))
+    result = verify.run(wh, RUN_DATE, Profile.model_validate({"decks": [{"deck": "DS::SQL"}]}))
+    assert result["passed"] == 1 and result["dropped"] == 1 and result["unverified"] == 0

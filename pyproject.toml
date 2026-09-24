@@ -8,7 +8,14 @@ version = "2.0.0"
 description = "Daily batch pipeline that generates new Anki cards from your existing collection and a personal prompt profile."
 requires-python = ">=3.10"
 dependencies = [
-    "ddgs>=9.0",
+    # Pinned together, on purpose. From 9.10 on, ddgs's DuckDuckGo engine fails
+    # every request with "malformed headers" and quietly falls back to Bing,
+    # which serves a CI runner trending junk on bad days. 9.9.3 works, but only
+    # with the primp it was built against: primp 2.x rejects its browser
+    # profiles ("Invalid impersonate"). Probe a newer pair from a runner (the
+    # lab/image-search branch has a workflow for it) before loosening this.
+    "ddgs>=9.9.3,<9.10",
+    "primp>=0.15,<0.16",
     "duckdb>=1.0",
     # Embeddings from an ONNX model in-process, so dedup needs no server and
     # no key. It is what lets the pipeline run on a throwaway CI machine.

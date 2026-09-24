@@ -7,21 +7,28 @@ query with something, and for software topics that something was reliably a
 stock photograph. A card with no picture beats a card with the wrong one.
 
 Search engines match the words around a picture and never the picture itself,
-so what comes back is checked by a model before it is used — see `fetch`.
+so what comes back is checked by a model before it is used — see `fetch`. A
+picture that could not be checked is not used: on a day the search engine
+served a runner Paw Patrol costumes for "S3 storage classes", the four
+pictures that went out unchecked were the four that should not have.
 
 Everything is saved as JPEG. Anki imports JPEG reliably; PNG and WebP caused
 import problems in v1, so conversion is unconditional rather than best-effort.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import logging
 import random
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from PIL import Image
@@ -31,14 +38,18 @@ logger = logging.getLogger(__name__)
 MAX_WIDTH = 800
 MIN_SOURCE_WIDTH = 300
 TIMEOUT = 15
-# Roughly three minutes of patience per query, spread over six tries.
-DDG_ATTEMPTS = 6
-# How many candidate pictures to actually look at before giving up on a card.
-# Three was too few: logos and stock photos take the early slots often enough
-# that a run rejected all four of its images and shipped none. Each look costs
-# one request on a metered free tier, and they come out of the checker's
-# allowance rather than the writer's, so five is affordable.
-MAX_CHECKS = 5
+# About half a minute of patience per query, spread over four tries. A result
+# page with nothing relevant on it counts as a failed try, so this is also how
+# long a query waits out a search engine that is serving junk.
+DDG_ATTEMPTS = 4
+# How many candidate pictures to look at before giving up on a card. Each look
+# is one request on a metered free tier, and a run once spent forty of them —
+# most of the checker's day — rejecting junk. Candidates are filtered by their
+# titles first now, so the ones that reach the checker are worth looking at.
+MAX_CHECKS = 3
+# Looks per run, across every card: the checker's allowance also has to cover
+# fact-checking the cards themselves, and any manual runs later in the day.
+RUN_CHECK_BUDGET = 24
 UNCHECKED = "unchecked"
 DDG_BACKOFF_CAP = 60
 USER_AGENT = "AnkiGen/2.1 (personal flashcard generator)"
@@ -85,8 +96,45 @@ def _width(value) -> int:
         return 0
 
 
-def search_duckduckgo(query: str, limit: int = 10,
-                      attempts: int = DDG_ATTEMPTS) -> list[tuple[str, str]]:
+# Words that say what kind of picture is wanted rather than what it is of.
+# A result that matches only these matched nothing.
+_GENERIC = frozenset("""
+    diagram diagrams table tables chart charts comparison compare compared vs versus
+    architecture overview explained explanation illustration illustrated timeline flow
+    flowchart relationship relationships example examples picture image images visual
+    lifecycle life cycle how what why when which the a an of and or in on for to with
+    between into from by is are its using use used
+""".split())
+
+
+def topic_terms(query: str, context: str = "") -> set[str]:
+    """The words of a query that name its subject.
+
+    The deck's context ("Apache Airflow") is left out on purpose: it is
+    there to steer the search engine, and a result that matches only it
+    matched the wrong thing — the attack helicopter matched "Apache".
+    """
+    ignore = _GENERIC | {w.lower() for w in re.findall(r"[A-Za-z0-9]+", context)}
+    return {w for w in re.findall(r"[a-z0-9]+", query.lower())
+            if w not in ignore and len(w) > 2}
+
+
+def looks_relevant(terms: set[str], *texts: str) -> bool:
+    """Does a result's title or address mention the subject at all?
+
+    Free to ask, unlike the checker: on bad days the search engine answers a
+    runner with trending pictures — costume photos, a TV poster — under titles
+    that share no word with the query, and each of those used to cost a look.
+    Endings are trimmed so "pools" finds "pool" and "classes" finds "class".
+    """
+    if not terms:
+        return True
+    haystack = " ".join(t.lower() for t in texts if t)
+    return any(t[:max(4, len(t) - 2)] in haystack for t in terms)
+
+
+def search_duckduckgo(query: str, limit: int = 10, attempts: int = DDG_ATTEMPTS,
+                      context: str = "") -> list[tuple[str, str]]:
     """(image url, page url) for a query, best sources first, retried patiently.
 
     This is by far the better source, so it is worth waiting for: a run is a
@@ -98,23 +146,27 @@ def search_duckduckgo(query: str, limit: int = 10,
     """
     from ddgs import DDGS
 
+    terms = topic_terms(query, context)
     for attempt in range(attempts):
         try:
             with DDGS() as ddgs:
                 results = list(ddgs.images(query, max_results=limit))
-            urls = [
-                (r["image"], r.get("url") or "")
-                for r in results
+            usable = [
+                r for r in results
                 if r.get("image") and _width(r.get("width")) >= MIN_SOURCE_WIDTH
                 and not _looks_like_junk(r.get("image"))
                 and not _looks_like_junk(r.get("url"))
             ]
+            relevant = [r for r in usable
+                        if looks_relevant(terms, r.get("title", ""), r.get("url", ""), r["image"])]
+            urls = [(r["image"], r.get("url") or "") for r in relevant]
             # Stable within each group, so search relevance still decides
             # between two equally reputable sources.
             urls.sort(key=_rank)
             if urls:
                 return urls
-            reason = "no results"
+            reason = (f"nothing about {' / '.join(sorted(terms))} in {len(usable)} results"
+                      if usable else "no results")
         except Exception as e:
             reason = str(e)
 
@@ -138,6 +190,10 @@ def search_duckduckgo(query: str, limit: int = 10,
 _JUNK_HOSTS = (
     "gettyimages.", "shutterstock.", "istockphoto.", "alamy.", "dreamstime.",
     "depositphotos.", "123rf.", "stock.adobe.", "storage.googleapis.com",
+    # More of the same SEO farms, on another cloud's storage.
+    "blob.core.windows.net",
+    # Refuses every download with 403, so a result from it is a wasted slot.
+    "researchgate.net",
 )
 
 
@@ -146,24 +202,38 @@ def _looks_like_junk(url: str) -> bool:
     return any(host in u for host in _JUNK_HOSTS)
 
 
+def _host(url: str) -> str:
+    try:
+        return (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
 # Where a technical diagram is likely to come from. Search relevance alone put
 # a duck ahead of airflow.apache.org for "airflow deferrable operator
 # triggerer architecture", and taking the first result that downloaded is how
 # it ended up on a card. Ranking by source before spending a check on it means
 # the official documentation gets looked at first.
 _PREFERRED_HOSTS = (
-    ".apache.org", "kubernetes.io", "docker.com", "aws.amazon.com", "cloud.google.com",
+    "apache.org", "kubernetes.io", "docker.com", "aws.amazon.com", "cloud.google.com",
     "learn.microsoft.com", "postgresql.org", "wikipedia.org", "wikimedia.org",
-    ".edu", "github.io", "readthedocs.io", "stackexchange.com", "stackoverflow.com",
-    "researchgate.net", "medium.com", "towardsdatascience.com", "dev.to", "zenn.dev",
-    "databricks.com", "snowflake.com", "confluent.io", "dbt.com", "grafana.com",
+    "github.io", "readthedocs.io", "stackexchange.com", "stackoverflow.com",
+    "medium.com", "towardsdatascience.com", "dev.to", "zenn.dev",
+    "databricks.com", "snowflake.com", "confluent.io", "getdbt.com", "dbt.com",
+    "grafana.com", "oras.land", "bytebytego.com",
 )
+
+
+def _preferred(host: str) -> bool:
+    """By host, not by substring: matching ".edu" anywhere in the address put
+    an SEO farm at udlvirtual.edu.pe ahead of the Airflow documentation."""
+    return host.endswith(".edu") or any(
+        host == h or host.endswith("." + h) for h in _PREFERRED_HOSTS)
 
 
 def _rank(candidate: tuple[str, str]) -> int:
     """0 for a source worth trying first, 1 for anything else."""
-    page = (candidate[1] or "").lower()
-    return 0 if any(host in page for host in _PREFERRED_HOSTS) else 1
+    return 0 if _preferred(_host(candidate[1])) else 1
 
 
 # ----------------------------------------------------------------- download
@@ -211,38 +281,81 @@ def download_as_jpeg(url: str, query: str, media_dir: Path) -> str | None:
     return target.name
 
 
+class CheckBudget:
+    """Looks left for this run, shared by the workers fetching in parallel."""
+
+    def __init__(self, looks: int):
+        self._left = looks
+        self._lock = threading.Lock()
+
+    def take(self) -> bool:
+        with self._lock:
+            if self._left <= 0:
+                return False
+            self._left -= 1
+            return True
+
+    def exhaust(self) -> None:
+        with self._lock:
+            self._left = 0
+
+
+# A picture carried inside a note is paid for in the size of your collection,
+# which syncs whole to every device, so inline copies are smaller than the
+# files the .apkg export carries.
+INLINE_WIDTH = 640
+INLINE_QUALITY = 72
+
+
+def inline_src(path: Path) -> str:
+    """The picture as a `data:` URI, small enough to live inside a note."""
+    with Image.open(path) as img:
+        img = img.convert("RGB")
+        if img.width > INLINE_WIDTH:
+            img = img.resize((INLINE_WIDTH, int(img.height * INLINE_WIDTH / img.width)),
+                             Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=INLINE_QUALITY, optimize=True)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
 def fetch(card_uid: str, query: str, media_dir: Path, card: str = "",
-          verifier=None, max_checks: int = MAX_CHECKS) -> ImageResult:
+          verifier=None, max_checks: int = MAX_CHECKS, context: str = "",
+          budget: CheckBudget | None = None) -> ImageResult:
     """First *usable* image for a query.
 
     With a `verifier`, usable means something looked at the picture and said it
     illustrates the card. Nothing short of that works: search results come from
     pages whose text matched the query, and the picture on such a page is
-    frequently unrelated to it.
+    frequently unrelated to it. When nothing can look — the checker is down or
+    its allowance is spent — the card goes without a picture.
     """
     if not query or len(query.strip()) < 3:
         return ImageResult(card_uid, query, detail="no image query")
 
     source = "duckduckgo"
     checks = 0
-    for url, page in search_duckduckgo(query):
+    for url, page in search_duckduckgo(query, context=context):
         name = download_as_jpeg(url, query, media_dir)
         if not name:
             continue
         if not (verifier and card):
             return ImageResult(card_uid, query, filename=name, source=source, url=page)
-        if checks >= max_checks:
+        if checks >= max_checks or (budget and not budget.take()):
             # Every look costs a request on a metered free tier, so stop rather
             # than work through the whole result page.
             (media_dir / name).unlink(missing_ok=True)
-            return ImageResult(card_uid, query,
-                               detail=f"no relevant image in the first {checks} checked")
+            why = (f"no relevant image in the first {checks} checked" if checks >= max_checks
+                   else "the run's budget for checking images is spent")
+            return ImageResult(card_uid, query, detail=why)
         try:
             keep, shows = verifier((media_dir / name).read_bytes(), card, query)
         except Exception as e:
-            logger.info("Cannot check images (%s); keeping %s unchecked", e, name)
-            return ImageResult(card_uid, query, filename=name, source=source, url=page,
-                               detail=f"{UNCHECKED}: {e}")
+            logger.info("Cannot check images (%s); leaving the card without one", e)
+            (media_dir / name).unlink(missing_ok=True)
+            if budget and "quota" in str(e).lower():
+                budget.exhaust()            # nothing will be able to look today
+            return ImageResult(card_uid, query, detail=f"{UNCHECKED}: {e}")
         checks += 1
         if keep:
             return ImageResult(card_uid, query, filename=name, source=source, url=page,
@@ -255,17 +368,21 @@ def fetch(card_uid: str, query: str, media_dir: Path, card: str = "",
 
 
 def fetch_many(jobs: list[tuple], media_dir: Path, workers: int = 3,
-               verifier=None) -> list[ImageResult]:
+               verifier=None, check_budget: int = RUN_CHECK_BUDGET) -> list[ImageResult]:
     """Fetch concurrently, but gently — DuckDuckGo throttles parallel callers."""
     if not jobs:
         return []
+    budget = CheckBudget(check_budget)
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        # A job is (card_uid, query) or (card_uid, query, card_text).
-        jobs = [(j[0], j[1], j[2] if len(j) > 2 else "") for j in jobs]
-        futures = [pool.submit(fetch, uid, query, media_dir, card, verifier)
-                   for uid, query, card in jobs]
+        # A job is (card_uid, query), optionally followed by the card's text
+        # and the deck's search context.
+        jobs = [(j[0], j[1], j[2] if len(j) > 2 else "", j[3] if len(j) > 3 else "")
+                for j in jobs]
+        futures = [pool.submit(fetch, uid, query, media_dir, card, verifier,
+                               context=context, budget=budget)
+                   for uid, query, card, context in jobs]
         results = []
-        for (uid, query, _card), future in zip(jobs, futures):
+        for (uid, query, _card, _context), future in zip(jobs, futures):
             try:
                 results.append(future.result())
             except Exception as e:                      # never let one image kill the stage

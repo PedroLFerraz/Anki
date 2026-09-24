@@ -58,7 +58,10 @@ def _with_image(card_type: str, values: dict, filename: str | None) -> dict:
     if card_type == "detailed":
         values["Image"] = img
     elif card_type == "cloze":
-        values["Extra"] = f"{values.get('Extra', '')}<br>{img}".lstrip("<br>")
+        # Not .lstrip("<br>"): that strips *characters*, and ate the first
+        # letter of any hint beginning with b or r.
+        extra = values.get("Extra", "")
+        values["Extra"] = f"{extra}<br>{img}" if extra else img
     else:
         values["Answer"] = f"{values.get('Answer', '')}<br>{img}"
     return values

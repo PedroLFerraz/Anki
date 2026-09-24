@@ -17,22 +17,43 @@ def _auth(endpoint=""):
     return SyncAuth(hkey="k", endpoint=endpoint)
 
 
+class _Note:
+    def __init__(self, fields=None):
+        self.guid = ""
+        self.tags = []
+        self.fields = dict(fields or {})
+
+    def __setitem__(self, k, v): self.fields[k] = v
+    def __getitem__(self, k): return self.fields[k]
+    def keys(self): return list(self.fields)
+
+
 class _Col:
-    """Just enough collection to drive sync and add_note."""
+    """Just enough collection to drive sync and add_note.
+
+    `existing` is a set of GUIDs already in the collection, or a mapping of
+    GUID to the fields of the note that has it.
+    """
 
     def __init__(self, required=Response.NORMAL_SYNC, existing=(), endpoint="", note_count=0):
         self.required = required
         self.endpoint = endpoint
         self.note_count = note_count
+        existing = existing if isinstance(existing, dict) else {g: {} for g in existing}
+        self.notes = {i: _Note(f) for i, f in enumerate(existing.values(), start=1)}
+        self.ids = {g: i for i, g in enumerate(existing, start=1)}
         self.existing = set(existing)
         self.added = []
+        self.updated = []
         self.uploads = []
+        self.media_asked = []
         self.db = self
         self.decks = self
         self.media = self
 
     # --- sync
     def sync_collection(self, auth, media):
+        self.media_asked.append(media)
         return Response(required=self.required)
 
     def sync_status(self, auth):
@@ -47,7 +68,13 @@ class _Col:
     def scalar(self, sql, guid=None):
         if "COUNT(*) FROM notes" in sql:
             return self.note_count
-        return 1 if guid in self.existing else None
+        return self.ids.get(guid)
+
+    def get_note(self, nid):
+        return self.notes[nid]
+
+    def update_note(self, note):
+        self.updated.append(note)
 
     def id(self, name):
         return 1
@@ -56,9 +83,6 @@ class _Col:
         return "stored.jpg"
 
     def new_note(self, notetype):
-        class _Note:
-            def __init__(self): self.guid = ""; self.tags = []; self.fields = {}
-            def __setitem__(self, k, v): self.fields[k] = v
         return _Note()
 
     def add_note(self, note, deck_id):
@@ -133,3 +157,104 @@ def test_an_empty_working_copy_is_downloaded_again(tmp_path, monkeypatch):
     monkeypatch.setattr("anki.collection.Collection", lambda path: full)
     push.open_collection(_auth())
     assert full.uploads == []              # already had one, left it alone
+
+
+# ---------------------------------------------------------------- pictures
+
+def _jpeg(path):
+    from PIL import Image
+    Image.new("RGB", (900, 300), (30, 60, 200)).save(path, "JPEG")
+
+
+def _detailed(card_uid="u1", image=None):
+    return {"card_uid": card_uid, "deck": "Data Platform::Docker", "card_type": "detailed",
+            "fields_json": '{"Question": "Q?", "Summary": "S", "Explanation": "E", '
+                           '"Image": "", "Reference": ""}',
+            "tags": ["ankigen"], "image_filename": image}
+
+
+def test_media_is_never_synced(tmp_path):
+    """Media sync would pull the whole media folder, over a gigabyte, down to
+    the runner — and it runs in the background, so closing the collection
+    cancelled it and the pictures never went up."""
+    col = _Col()
+    push.sync(col, _auth())
+    assert col.media_asked == [False]
+
+
+def test_a_new_card_carries_its_picture_inline(tmp_path, monkeypatch):
+    monkeypatch.setattr(push, "_notetype", lambda col, ct: {"name": "AnkiGen Detailed"})
+    _jpeg(tmp_path / "docker_layers_1234abcd.jpg")
+    col = _Col()
+    result = push.push_cards(col, [_detailed(image="docker_layers_1234abcd.jpg")], tmp_path)
+    [note] = col.added
+    assert note.fields["Image"].startswith('<img src="data:image/jpeg;base64,')
+    assert result.media == 1
+
+
+def test_inline_pictures_are_kept_small(tmp_path):
+    from ankigen import images
+    _jpeg(tmp_path / "big.jpg")
+    src = images.inline_src(tmp_path / "big.jpg")
+    import base64, io
+    from PIL import Image
+    with Image.open(io.BytesIO(base64.b64decode(src.split(",", 1)[1]))) as img:
+        assert img.width == images.INLINE_WIDTH
+
+
+def test_a_broken_picture_from_an_earlier_push_is_repaired(tmp_path, monkeypatch):
+    """The first pushed notes point at files that never reached AnkiWeb."""
+    import genanki
+    guid = genanki.guid_for("u1")
+    col = _Col(existing={guid: {"Question": "Q?", "Summary": "S", "Explanation": "E",
+                                "Image": '<img src="docker_image_registry_tag_vs_57ff313d.jpg">',
+                                "Reference": ""}})
+    _jpeg(tmp_path / "docker_digest_0badf00d.jpg")
+
+    result = push.push_cards(col, [_detailed(image="docker_digest_0badf00d.jpg")], tmp_path)
+    assert result.updated == 1 and result.added == 0
+    assert col.notes[1].fields["Image"].startswith('<img src="data:image/jpeg;base64,')
+
+
+def test_a_picture_the_day_no_longer_has_is_taken_off(tmp_path):
+    import genanki
+    guid = genanki.guid_for("u1")
+    col = _Col(existing={guid: {"Question": "Q?", "Summary": "S", "Explanation": "E",
+                                "Image": '<img src="kelp_forest_0badf00d.jpg">', "Reference": ""}})
+    result = push.push_cards(col, [_detailed(image=None)], tmp_path)
+    assert result.updated == 1
+    assert col.notes[1].fields["Image"] == ""
+
+
+def test_a_picture_that_cannot_be_read_here_is_left_alone(tmp_path):
+    """A push without the images stage has no files; that is not "no picture"."""
+    import genanki
+    guid = genanki.guid_for("u1")
+    before = '<img src="data:image/jpeg;base64,AAAA">'
+    col = _Col(existing={guid: {"Question": "Q?", "Summary": "S", "Explanation": "E",
+                                "Image": before, "Reference": ""}})
+    result = push.push_cards(col, [_detailed(image="not_downloaded_here_1234abcd.jpg")], tmp_path)
+    assert (result.updated, result.skipped) == (0, 1)
+    assert col.notes[1].fields["Image"] == before and col.updated == []
+
+
+def test_only_our_picture_is_replaced_in_a_shared_field(tmp_path):
+    """Basic cards carry the picture at the end of the answer, where your own
+    edits live too."""
+    import genanki
+    guid = genanki.guid_for("u2")
+    col = _Col(existing={guid: {"Question": "Q?",
+                                "Answer": 'Edited by hand.<br><img src="pods_0badf00d.jpg">'}})
+    card = {"card_uid": "u2", "deck": "DS::SQL", "card_type": "basic",
+            "fields_json": '{"Question": "Q?", "Answer": "A."}', "tags": [], "image_filename": None}
+    push.push_cards(col, [card], tmp_path)
+    assert col.notes[1].fields["Answer"] == "Edited by hand."
+
+
+def test_an_unchanged_note_is_not_rewritten(tmp_path):
+    import genanki
+    guid = genanki.guid_for("u1")
+    col = _Col(existing={guid: {"Question": "Q?", "Summary": "S", "Explanation": "E",
+                                "Image": "", "Reference": ""}})
+    result = push.push_cards(col, [_detailed(image=None)], tmp_path)
+    assert (result.updated, result.skipped) == (0, 1) and col.updated == []
