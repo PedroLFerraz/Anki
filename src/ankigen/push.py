@@ -16,6 +16,11 @@ and picking ours would overwrite however many years of review history with
 whatever this copy happens to hold. `full_upload_or_download` is therefore
 called in exactly one place: the first ever run, to fetch a copy when we have
 none. It is never called with upload=True.
+
+One wrinkle of the protocol: AnkiWeb spreads accounts over several sync hosts
+and names the right one on first contact, so every session starts with a
+handshake. Going straight to the default host fails a full download with
+`400 missing original size`, which is not a hint about anything.
 """
 from __future__ import annotations
 
@@ -77,26 +82,57 @@ def _auth():
         scratch.unlink(missing_ok=True)
 
 
+def _at(auth, endpoint: str):
+    from anki.sync_pb2 import SyncAuth
+
+    if not endpoint or endpoint == auth.endpoint:
+        return auth
+    logger.info("AnkiWeb redirected us to %s", endpoint)
+    return SyncAuth(hkey=auth.hkey, endpoint=endpoint)
+
+
+def resolve_endpoint(col, auth):
+    """Find which sync host this account lives on.
+
+    AnkiWeb spreads accounts over several hosts and tells a client which one
+    it belongs to on first contact. Skipping that handshake and going straight
+    to the default host fails a full download with `400 missing original
+    size`, which says nothing about the real problem.
+    """
+    return _at(auth, col.sync_status(auth).new_endpoint)
+
+
 def open_collection(auth=None):
-    """Our working copy, downloaded from AnkiWeb the first time."""
+    """Our working copy, downloaded from AnkiWeb the first time.
+
+    Returns the collection and the auth to keep using, which may now point at
+    a different host than the one we started with.
+    """
     from anki.collection import Collection
 
     path = Path(settings.data_dir) / WORKING_COPY
     path.parent.mkdir(parents=True, exist_ok=True)
     first_time = not path.exists()
     col = Collection(str(path))
-    if first_time and auth is not None:
+    if auth is None:
+        return col, auth
+
+    auth = resolve_endpoint(col, auth)
+    if first_time:
         logger.info("No working copy yet; downloading your collection from AnkiWeb.")
         # The only full transfer this module performs, and only ever downward.
         col.full_upload_or_download(auth=auth, server_usn=None, upload=False)
-    return col
+    return col, auth
 
 
-def sync(col, auth, media: bool = True) -> str:
-    """Reconcile with AnkiWeb, or refuse to guess."""
+def sync(col, auth, media: bool = True) -> tuple[str, object]:
+    """Reconcile with AnkiWeb, or refuse to guess. Returns (what happened, auth)."""
     from anki.sync_pb2 import SyncCollectionResponse as Response
 
     out = col.sync_collection(auth, media)
+    if out.new_endpoint:
+        auth = _at(auth, out.new_endpoint)
+        out = col.sync_collection(auth, media)
     required = out.required
     if required in (Response.FULL_SYNC, Response.FULL_UPLOAD, Response.FULL_DOWNLOAD):
         raise SyncRefused(
@@ -108,8 +144,9 @@ def sync(col, auth, media: bool = True) -> str:
             f"{Path(settings.data_dir) / WORKING_COPY} so the next push starts "
             "from a fresh download."
         )
-    return {Response.NO_CHANGES: "already up to date",
-            Response.NORMAL_SYNC: "synced"}.get(required, "synced")
+    state = {Response.NO_CHANGES: "already up to date",
+             Response.NORMAL_SYNC: "synced"}.get(required, "synced")
+    return state, auth
 
 
 def _notetype(col, card_type: str):

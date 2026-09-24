@@ -203,9 +203,9 @@ def pull(no_media: bool = typer.Option(False, "--no-media", help="Skip syncing i
     from ankigen import push as pusher
 
     auth = pusher._auth()
-    col = pusher.open_collection(auth)
+    col, auth = pusher.open_collection(auth)
     try:
-        state = pusher.sync(col, auth, media=not no_media)
+        state, auth = pusher.sync(col, auth, media=not no_media)
         notes = col.db.scalar("SELECT COUNT(*) FROM notes") or 0
     finally:
         col.close()
@@ -271,12 +271,14 @@ def push(
         return
 
     auth = pusher._auth()
-    col = pusher.open_collection(auth)
+    col, auth = pusher.open_collection(auth)
     try:
-        typer.echo(f"  down: {pusher.sync(col, auth, media=not no_media)}")
+        state, auth = pusher.sync(col, auth, media=not no_media)
+        typer.echo(f"  down: {state}")
         result = pusher.push_cards(col, cards, Path(settings.data_dir) / "media", deck_for)
         typer.echo(f"  push: {result}")
-        typer.echo(f"  up:   {pusher.sync(col, auth, media=not no_media)}")
+        state, auth = pusher.sync(col, auth, media=not no_media)
+        typer.echo(f"  up:   {state}")
     finally:
         col.close()
     typer.echo("\nSync Anki on your devices to pull them down.")
