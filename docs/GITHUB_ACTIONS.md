@@ -41,7 +41,8 @@ change models without editing the workflow. Both take a comma-separated
 preference order, best first.
 
 Then Actions → **daily cards** → Run workflow. After that it runs daily at
-06:00 your time.
+08:17 UTC (05:17 in São Paulo), with a backup at 11:43 UTC that does nothing if
+the first one already succeeded.
 
 ## Running one deck on demand
 
@@ -55,11 +56,25 @@ ankigen run --deck "Data Platform::Kubernetes" --topic "probes" --prompt "Contra
 
 ## What to know
 
+**Pictures travel inside the notes.** The runner never syncs media: for its
+working copy that would mean downloading your whole media folder, and media
+sync runs in the background, where closing the collection cancelled it — the
+first pushed pictures arrived as broken-image icons for exactly that reason.
+Each picture is re-encoded small (640px JPEG) and stored in the note as a
+`data:` URI instead. To redo a day's pictures, run the workflow with `stages`
+set to `images,export,report` and that day's `run_date`: the push refreshes
+the picture on notes it already made, and leaves the rest of each note alone.
+
 **The sync refuses to guess.** If AnkiWeb reports that the runner's copy and
 yours have diverged beyond a normal merge, the job stops. Resolving that means
 declaring one side the winner, and choosing the runner's could discard review
 history. Sync from Anki on your own machine, then re-run; if it persists, clear
 the `anki-collection-` cache so the next run starts from a fresh download.
+
+**GitHub's schedule is best-effort.** Runs start late under load and are
+sometimes dropped altogether, most often on the hour, which is how the first
+09:00 run never happened. That is why the schedule sits on an odd minute and has
+a backup.
 
 **Scheduled workflows stop after 60 days without a commit.** GitHub disables
 them on dormant repositories, and does not tell you.

@@ -193,7 +193,7 @@ def report(run_date: Optional[str] = DateOpt):
 
 
 @app.command("pull")
-def pull(no_media: bool = typer.Option(False, "--no-media", help="Skip syncing images.")):
+def pull():
     """Bring the working copy of your collection up to date from AnkiWeb.
 
     Run before the pipeline when there is no local Anki to read: the runner in
@@ -205,7 +205,7 @@ def pull(no_media: bool = typer.Option(False, "--no-media", help="Skip syncing i
     auth = pusher._auth()
     col, auth = pusher.open_collection(auth)
     try:
-        state, auth = pusher.sync(col, auth, media=not no_media)
+        state, auth = pusher.sync(col, auth)
         notes = col.db.scalar("SELECT COUNT(*) FROM notes") or 0
     finally:
         col.close()
@@ -222,7 +222,6 @@ def push(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Say what would be pushed, touch nothing."
     ),
-    no_media: bool = typer.Option(False, "--no-media", help="Skip syncing images."),
 ):
     """Push a run's cards into your Anki collection, over AnkiWeb.
 
@@ -273,11 +272,11 @@ def push(
     auth = pusher._auth()
     col, auth = pusher.open_collection(auth)
     try:
-        state, auth = pusher.sync(col, auth, media=not no_media)
+        state, auth = pusher.sync(col, auth)
         typer.echo(f"  down: {state}")
         result = pusher.push_cards(col, cards, Path(settings.data_dir) / "media", deck_for)
         typer.echo(f"  push: {result}")
-        state, auth = pusher.sync(col, auth, media=not no_media)
+        state, auth = pusher.sync(col, auth)
         typer.echo(f"  up:   {state}")
     finally:
         col.close()

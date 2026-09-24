@@ -45,6 +45,10 @@ on:
         description: "Date to generate for (YYYY-MM-DD). Blank means today."
         required: false
         type: string
+      stages:
+        description: "Only these stages, comma-separated (e.g. images,export,report). Blank runs all."
+        required: false
+        type: string
 
 concurrency:                  # DuckDB takes one writer, and so does the cache
   group: daily-cards
@@ -157,6 +161,11 @@ jobs:
           [ -n "${{ inputs.topic }}" ]  && args+=(--topic "${{ inputs.topic }}")
           [ -n "${{ inputs.prompt }}" ] && args+=(--prompt "${{ inputs.prompt }}")
           [ -n "${{ inputs.count }}" ]  && args+=(--count "${{ inputs.count }}")
+          # Re-running only the later stages redoes a day's pictures without
+          # writing new cards, and the push then refreshes them on the notes.
+          for stage in $(echo "${{ inputs.stages }}" | tr ',' ' '); do
+            args+=(--stage "$stage")
+          done
 
           python -m ankigen pull
           echo "ankigen run ${args[*]}"

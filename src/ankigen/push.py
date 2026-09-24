@@ -21,10 +21,20 @@ One wrinkle of the protocol: AnkiWeb spreads accounts over several sync hosts
 and names the right one on first contact, so every session starts with a
 handshake. Going straight to the default host fails a full download with
 `400 missing original size`, which is not a hint about anything.
+
+Media is never synced from here, and pictures travel inside the note instead,
+as `data:` URIs. Media sync is what uploads a picture file, but it is also how
+a client catches up on every file it lacks: for this working copy that is the
+whole of your media folder, over a gigabyte, on every run. It also runs in the
+background, and closing the collection cancels it — which is how the first
+pushed pictures arrived on phones as broken-image icons: the notes went up,
+the files never did.
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,12 +60,13 @@ class NotLoggedIn(RuntimeError):
 class PushResult:
     added: int
     skipped: int
-    media: int
+    media: int              # pictures carried inline, on new and updated notes
     decks: list[str]
+    updated: int = 0        # notes already there whose picture changed
 
     def __str__(self) -> str:
-        return (f"{self.added} added, {self.skipped} already there, "
-                f"{self.media} media file(s), decks: {', '.join(self.decks) or 'none'}")
+        return (f"{self.added} added, {self.updated} updated, {self.skipped} already there, "
+                f"{self.media} picture(s), decks: {', '.join(self.decks) or 'none'}")
 
 
 def _auth():
@@ -130,14 +141,17 @@ def open_collection(auth=None):
     return col, auth
 
 
-def sync(col, auth, media: bool = True) -> tuple[str, object]:
-    """Reconcile with AnkiWeb, or refuse to guess. Returns (what happened, auth)."""
+def sync(col, auth) -> tuple[str, object]:
+    """Reconcile notes with AnkiWeb, or refuse to guess. Returns (what happened, auth).
+
+    Never media: see the module docstring.
+    """
     from anki.sync_pb2 import SyncCollectionResponse as Response
 
-    out = col.sync_collection(auth, media)
+    out = col.sync_collection(auth, False)
     if out.new_endpoint:
         auth = _at(auth, out.new_endpoint)
-        out = col.sync_collection(auth, media)
+        out = col.sync_collection(auth, False)
     required = out.required
     if required in (Response.FULL_SYNC, Response.FULL_UPLOAD, Response.FULL_DOWNLOAD):
         raise SyncRefused(
@@ -182,19 +196,29 @@ def _notetype(col, card_type: str):
 
 
 def push_cards(col, cards: list[dict], media_dir: Path, deck_for=None) -> PushResult:
-    """Add cards the collection does not already have.
+    """Add cards the collection does not already have, and bring the pictures
+    of the ones it does up to date.
 
     Identified by the same GUID the .apkg export uses, so a card pushed here
     and a card imported from the package are the same note rather than two.
+    A note that is already there is otherwise left alone: only the picture
+    this program put on it is replaced, so re-running a day's images stage
+    and pushing again repairs that day's pictures without touching your edits.
     """
     import genanki
 
-    added = skipped = media = 0
+    added = skipped = updated = pictures = 0
     decks: set[str] = set()
     for card in cards:
         guid = genanki.guid_for(card["card_uid"])
-        if col.db.scalar("SELECT 1 FROM notes WHERE guid = ?", guid):
-            skipped += 1
+        src = _picture_src(card, media_dir)
+        nid = col.db.scalar("SELECT id FROM notes WHERE guid = ?", guid)
+        if nid:
+            if src is not None and _refresh_picture(col, nid, card["card_type"], src):
+                updated += 1
+                pictures += bool(src)
+            else:
+                skipped += 1
             continue
 
         deck_name = deck_for(card["deck"]) if deck_for else card["deck"]
@@ -204,14 +228,11 @@ def push_cards(col, cards: list[dict], media_dir: Path, deck_for=None) -> PushRe
         notetype = _notetype(col, card["card_type"])
         note = col.new_note(notetype)
         note.guid = guid
-        import json as _json
 
-        values = _json.loads(card["fields_json"])
-        filename = card.get("image_filename")
-        if filename and (media_dir / filename).exists():
-            stored = col.media.add_file(str(media_dir / filename))
-            values = _with_image(card["card_type"], values, stored)
-            media += 1
+        values = json.loads(card["fields_json"])
+        if src:
+            values = _with_image(card["card_type"], values, src)
+            pictures += 1
 
         for fieldname in CARD_TYPES[card["card_type"]]["fields"]:
             note[fieldname] = str(values.get(fieldname, ""))
@@ -220,11 +241,56 @@ def push_cards(col, cards: list[dict], media_dir: Path, deck_for=None) -> PushRe
         col.add_note(note, deck_id)
         added += 1
 
-    return PushResult(added, skipped, media, sorted(decks))
+    return PushResult(added, skipped, pictures, sorted(decks), updated)
 
 
-def _with_image(card_type: str, values: dict, filename: str) -> dict:
+def _picture_src(card: dict, media_dir: Path) -> str | None:
+    """What the card's picture should be: an inline `data:` URI, "" for no
+    picture, or None when that cannot be known here.
+
+    None matters. A push run without the images stage has no downloaded
+    files, and reading that as "no picture" would strip every picture from
+    the day's notes.
+    """
+    filename = card.get("image_filename")
+    if not filename:
+        return ""
+    path = media_dir / filename
+    if not path.exists():
+        return None
+    from ankigen.images import inline_src
+
+    return inline_src(path)
+
+
+# The field each card type carries its picture in, and the pictures this
+# program has put there: inline ones, and files named the way images.py names
+# them — which is what the first pushed notes carry, pointing at files that
+# never reached AnkiWeb.
+PICTURE_FIELD = {"detailed": "Image", "basic": "Answer", "cloze": "Extra"}
+_OUR_PICTURE = re.compile(
+    r'(?:<br>)?<img src="(?:data:image/[a-z]+;base64,[A-Za-z0-9+/=]+|[a-z0-9_]+_[0-9a-f]{8}\.jpg)">'
+)
+
+
+def _refresh_picture(col, nid, card_type: str, src: str) -> bool:
+    """Replace the picture on an existing note. Returns whether it changed."""
+    field = PICTURE_FIELD.get(card_type)
+    note = col.get_note(nid)
+    if not field or field not in note.keys():
+        return False
+    current = note[field]
+    base = _OUR_PICTURE.sub("", current)
+    want = _with_image(card_type, {field: base}, src)[field] if src else base
+    if want == current:
+        return False
+    note[field] = want
+    col.update_note(note)
+    return True
+
+
+def _with_image(card_type: str, values: dict, src: str) -> dict:
     """Same placement the .apkg export uses, so both routes look alike."""
     from ankigen.export import _with_image as place
 
-    return place(card_type, values, filename)
+    return place(card_type, values, src)

@@ -48,8 +48,10 @@ _spent: set[str] = set()
 _busy_until: dict[str, float] = {}
 BUSY_COOLDOWN = 600
 # While another model is left to try, a busy one gets this many attempts
-# rather than the full budget: falling through is cheaper than waiting.
-FALLTHROUGH_ATTEMPTS = 2
+# rather than the full budget. One, because a 503 is not free: gemini-3.8-flash
+# answered nothing but 503s one morning and was still "out of quota for today"
+# by eleven, so every retry of a busy model spends its daily allowance.
+FALLTHROUGH_ATTEMPTS = 1
 
 
 class QuotaExhausted(RuntimeError):
@@ -355,8 +357,7 @@ def check_image(image: bytes, card: str, query: str, cfg: dict | None = None) ->
                     contents=[types.Part.from_bytes(data=image, mime_type="image/jpeg"), prompt],
                     config=types.GenerateContentConfig(response_mime_type="application/json"),
                 )
-                data = json.loads(response.text)
-                return bool(data.get("helps")), str(data.get("shows", ""))[:120]
+                return _verdict(json.loads(response.text))
             except Exception as e:
                 if _is_daily_quota(str(e)):
                     _spent.add(model)
@@ -377,5 +378,15 @@ def check_image(image: bytes, card: str, query: str, cfg: dict | None = None) ->
             {"type": "image_url", "image_url": {"url": data_uri}},
         ]}],
     )
-    data = json.loads(extract_json(response.choices[0].message.content or ""))
+    return _verdict(json.loads(extract_json(response.choices[0].message.content or "")))
+
+
+def _verdict(data) -> tuple[bool, str]:
+    """The checker's answer, which is asked for as an object but sometimes
+    arrives wrapped in a list — once as `'list' object has no attribute
+    'get'`, which kept an unchecked picture on a card."""
+    if isinstance(data, list):
+        data = next((d for d in data if isinstance(d, dict)), {})
+    if not isinstance(data, dict):
+        raise ValueError(f"the checker answered with {type(data).__name__}, not an object")
     return bool(data.get("helps")), str(data.get("shows", ""))[:120]

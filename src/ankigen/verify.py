@@ -91,7 +91,9 @@ def run(wh, run_date: date, profile: Profile) -> dict:
                     build_prompt(batch[0]["deck"], profile.learner.level, batch),
                     cfg=checker,
                 )
-                verdicts = judge(result.data.get("results", []), batch)
+                data = result.data
+                # Asked for {"results": [...]}; a bare list is the same answer.
+                verdicts = judge(data if isinstance(data, list) else data.get("results", []), batch)
             except llm.QuotaExhausted as e:
                 # Cards pass through unverified rather than being dropped, but
                 # the later batches do not queue up behind a cap that will not

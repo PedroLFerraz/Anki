@@ -66,13 +66,13 @@ def test_corrupt_image_is_deleted(tmp_path, monkeypatch):
 
 def test_duckduckgo_wins_when_it_answers(tmp_path, monkeypatch):
     monkeypatch.setattr(images, "search_duckduckgo",
-                        lambda q, limit=10, attempts=6: [("https://ddg/x.png", "https://docs/p")])
+                        lambda q, **k: [("https://ddg/x.png", "https://docs/p")])
     monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
     assert images.fetch("u1", "airflow dag", tmp_path).source == "duckduckgo"
 
 
 def test_both_sources_failing_is_recorded_not_raised(tmp_path, monkeypatch):
-    monkeypatch.setattr(images, "search_duckduckgo", lambda q, limit=5: [])
+    monkeypatch.setattr(images, "search_duckduckgo", lambda q, **k: [])
     result = images.fetch("u1", "something unillustratable", tmp_path)
     assert not result.found and "no usable image" in result.detail
 
@@ -111,7 +111,8 @@ def test_duckduckgo_keeps_trying_until_it_answers(ddg):
     ddg.script = [
         RuntimeError("RequestError: malformed headers"),
         [],                                                      # engine answered with nothing
-        [{"image": "https://ddg/good.png", "width": 900}],
+        [{"image": "https://ddg/good.png", "width": 900,
+          "title": "Kubernetes control plane components"}],
     ]
     assert images.search_duckduckgo("kubernetes control plane") == [("https://ddg/good.png", "")]
     assert ddg.calls == 3
@@ -126,13 +127,13 @@ def test_duckduckgo_gives_up_after_its_last_attempt(ddg):
 def test_width_reported_as_a_string_is_still_usable(ddg):
     """ddgs falls back to other engines, and Bing reports width as a string —
     comparing it raised, which quietly threw away every result."""
-    ddg.script = [[{"image": "https://bing/x.png", "width": "900"},
-                   {"image": "https://bing/small.png", "width": "80"}]]
+    ddg.script = [[{"image": "https://bing/x.png", "width": "900", "title": "Docker layers"},
+                   {"image": "https://bing/small.png", "width": "80", "title": "Docker layers"}]]
     assert images.search_duckduckgo("docker layers") == [("https://bing/x.png", "")]
 
 
 def test_one_failing_job_does_not_sink_the_batch(tmp_path, monkeypatch):
-    def flaky(uid, query, media_dir, card="", verifier=None):
+    def flaky(uid, query, media_dir, card="", verifier=None, **kwargs):
         if query == "bad":
             raise RuntimeError("boom")
         return images.ImageResult(uid, query, filename="ok.jpg", source="duckduckgo")
@@ -285,7 +286,7 @@ def test_images_are_only_fetched_for_surviving_cards(wh, tmp_path, monkeypatch, 
 
     asked = []
     monkeypatch.setattr(images, "fetch_many",
-                        lambda jobs, media_dir, workers=3, verifier=None: (asked.extend(jobs), [
+                        lambda jobs, media_dir, **k: (asked.extend(jobs), [
                             images.ImageResult(j[0], j[1], filename="x.jpg", source="duckduckgo")
                             for j in jobs])[1])
     ctx = pipeline.Context(cfg, profile, wh)
@@ -309,7 +310,7 @@ def test_images_stage_skipped_for_decks_that_opt_out(wh, tmp_path, monkeypatch, 
     profile.decks[0].images = False        # DS::SQL opts out
     asked = []
     monkeypatch.setattr(images, "fetch_many",
-                        lambda jobs, media_dir, workers=3, verifier=None: (asked.extend(jobs), [])[1])
+                        lambda jobs, media_dir, **k: (asked.extend(jobs), [])[1])
     result = pipeline.stage_images(pipeline.Context(cfg, profile, wh), RUN_DATE)
     assert result["wanted"] == 0 and asked == []       # nothing requested, nothing downloaded
 
@@ -320,7 +321,7 @@ def test_an_image_the_model_rejects_is_not_used(tmp_path, monkeypatch):
     """A card about S3's flat namespace was illustrated with a stock photo of a
     basketball player, from a page whose title matched the query exactly."""
     monkeypatch.setattr(images, "search_duckduckgo",
-                        lambda q, limit=10, attempts=6: [("https://seo.farm/a.png", "https://a"),
+                        lambda q, **k: [("https://seo.farm/a.png", "https://a"),
                                                          ("https://ok/b.png", "https://b")])
     monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
 
@@ -340,7 +341,7 @@ def test_an_image_the_model_rejects_is_not_used(tmp_path, monkeypatch):
 def test_giving_up_rather_than_checking_the_whole_result_page(tmp_path, monkeypatch):
     """Each look costs a request on a metered free tier."""
     monkeypatch.setattr(images, "search_duckduckgo",
-                        lambda q, limit=10, attempts=6: [(f"https://x/{i}.png", "") for i in range(9)])
+                        lambda q, **k: [(f"https://x/{i}.png", "") for i in range(9)])
     monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
     looks = []
 
@@ -352,16 +353,48 @@ def test_giving_up_rather_than_checking_the_whole_result_page(tmp_path, monkeypa
     assert list(tmp_path.glob("*.jpg")) == []      # nothing left behind
 
 
-def test_a_checker_outage_keeps_the_image_and_says_it_is_unchecked(tmp_path, monkeypatch):
+def test_a_picture_nobody_could_check_is_not_used(tmp_path, monkeypatch):
+    """The four pictures that once went out unchecked, because the checker was
+    busy, were a poster and three costume photos."""
     monkeypatch.setattr(images, "search_duckduckgo",
-                        lambda q, limit=10, attempts=6: [("https://x/a.png", "")])
+                        lambda q, **k: [("https://x/a.png", "")])
     monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
 
     def down(blob, card, query):
-        raise RuntimeError("out of quota")
+        raise RuntimeError("503 UNAVAILABLE")
 
     result = images.fetch("u1", "kubernetes pods", tmp_path, card="c", verifier=down)
-    assert result.found and result.detail.startswith(images.UNCHECKED)
+    assert not result.found and result.detail.startswith(images.UNCHECKED)
+    assert list(tmp_path.glob("*.jpg")) == []      # the unchecked download is gone too
+
+
+def test_a_spent_checker_stops_the_rest_of_the_run_from_asking(tmp_path, monkeypatch):
+    monkeypatch.setattr(images, "search_duckduckgo",
+                        lambda q, **k: [("https://x/a.png", ""), ("https://x/b.png", "")])
+    monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
+    calls = []
+
+    def spent(blob, card, query):
+        calls.append(query)
+        raise RuntimeError("429 RESOURCE_EXHAUSTED: quota exceeded")
+
+    budget = images.CheckBudget(10)
+    images.fetch("u1", "kubernetes pods", tmp_path, card="c", verifier=spent, budget=budget)
+    later = images.fetch("u2", "kubernetes nodes", tmp_path, card="c", verifier=spent, budget=budget)
+    assert calls == ["kubernetes pods"]            # the second card never asked
+    assert not later.found and "budget" in later.detail
+
+
+def test_the_run_budget_is_shared_across_cards(tmp_path, monkeypatch):
+    monkeypatch.setattr(images, "search_duckduckgo",
+                        lambda q, **k: [(f"https://x/{q}{i}.png", "") for i in range(5)])
+    monkeypatch.setattr(images.requests, "get", lambda *a, **k: _Resp(_png_bytes()))
+    looks = []
+    budget = images.CheckBudget(4)
+    for q in ("pods", "nodes", "services"):
+        images.fetch("u", q, tmp_path, card="c", budget=budget,
+                     verifier=lambda b, c, q: (looks.append(q), (False, "junk"))[1])
+    assert len(looks) == 4                         # 3 for the first card, 1 left for the rest
 
 
 def test_stock_libraries_and_scraper_buckets_are_skipped():
@@ -378,9 +411,12 @@ def test_documentation_is_tried_before_a_random_blog(monkeypatch):
         def __exit__(self, *a): return False
         def images(self, query, max_results=10):
             return [
-                {"image": "https://cdn/blog.png", "url": "https://someblog.example/post", "width": 800},
-                {"image": "https://cdn/docs.png", "url": "https://airflow.apache.org/docs/", "width": 800},
-                {"image": "https://cdn/so.png", "url": "https://stackoverflow.com/q/1", "width": 800},
+                {"image": "https://cdn/blog.png", "url": "https://someblog.example/post",
+                 "width": 800, "title": "Airflow triggerer explained"},
+                {"image": "https://cdn/docs.png", "url": "https://airflow.apache.org/docs/",
+                 "width": 800, "title": "Deferrable operators & triggers"},
+                {"image": "https://cdn/so.png", "url": "https://stackoverflow.com/q/1",
+                 "width": 800, "title": "How does the Airflow triggerer work?"},
             ]
 
     monkeypatch.setattr("ddgs.DDGS", _DDGS)
@@ -410,3 +446,70 @@ def test_profile_finds_the_context_for_a_deck():
     assert profile.image_context_for("Data Platform::Airflow") == "Apache Airflow"
     assert profile.image_context_for("DS::SQL") == ""
     assert profile.image_context_for("Not::A::Deck") == ""
+
+
+# ---------------------------------------------------------------- relevance before looking
+
+def _results(*titles, url="https://example.com/p"):
+    return [{"image": f"https://cdn/{i}.png", "url": url, "width": 900, "title": t}
+            for i, t in enumerate(titles)]
+
+
+def test_results_that_share_no_word_with_the_subject_are_skipped(ddg):
+    """On a bad day the runner got an attack helicopter for Airflow pools: it
+    matched "Apache", which is the deck's context, not the subject."""
+    ddg.script = [_results("AH-64 Apache attack helicopter",
+                           "Apache Airflow: Pools. Optimizing workflow concurrency",
+                           "Famous Apache Indians")]
+    found = images.search_duckduckgo("Apache Airflow task queue pools diagram",
+                                     context="Apache Airflow")
+    assert found == [("https://cdn/1.png", "https://example.com/p")]
+
+
+def test_a_page_of_trending_junk_counts_as_a_failed_try(ddg):
+    ddg.script = [_results("Paw Patrol Halloween costumes", "Star Trek: Strange New Worlds"),
+                  _results("Amazon S3 storage classes compared")]
+    found = images.search_duckduckgo("Amazon S3 storage classes comparison table", context="AWS")
+    assert len(found) == 1 and ddg.calls == 2     # searched again rather than looking at junk
+
+
+def test_the_address_counts_as_well_as_the_title(ddg):
+    ddg.script = [[{"image": "https://docs.aws.amazon.com/images/lifecycle-transitions-v4.png",
+                    "url": "https://hyeon9mak.github.io/aws-s3-glacier/", "width": 900,
+                    "title": "S3 Glacier 정리"}]]
+    assert images.search_duckduckgo("AWS S3 lifecycle transition timeline", context="AWS")
+
+
+def test_topic_terms_leave_out_the_kind_of_picture_and_the_context():
+    assert images.topic_terms("Apache Airflow deferrable operator lifecycle diagram",
+                              "Apache Airflow") == {"deferrable", "operator"}
+    assert images.topic_terms("diagram", "") == set()
+    assert images.looks_relevant(set(), "anything")          # nothing to match: no gate
+
+
+def test_endings_do_not_stop_a_match():
+    assert images.looks_relevant({"pools"}, "Apache Airflow: Pool slots")
+    assert images.looks_relevant({"classes"}, "S3 storage class comparison")
+    assert not images.looks_relevant({"pools"}, "Kelp forest, underwater")
+
+
+def test_preferred_sources_are_matched_by_host():
+    """".edu" anywhere in the address once ranked an SEO farm first."""
+    assert images._rank(("i", "https://airflow.apache.org/docs/")) == 0
+    assert images._rank(("i", "https://cs.stanford.edu/notes")) == 0
+    assert images._rank(("i", "https://design.udlvirtual.edu.pe/en/docker")) == 1
+    assert images._rank(("i", "https://notapache.org.example.com/")) == 1
+    assert images._rank(("i", "")) == 1
+
+
+def test_hosts_that_refuse_downloads_are_skipped():
+    assert images._looks_like_junk("https://www.researchgate.net/figure/x.png")
+    assert images._looks_like_junk("https://exowdvyzb.blob.core.windows.net/a.html")
+
+
+def test_a_cloze_hint_keeps_its_first_letter():
+    """`.lstrip("<br>")` strips characters, not a prefix: "remember" lost its r."""
+    values = export._with_image("cloze", {"Text": "t", "Extra": "remember the port"}, "x.jpg")
+    assert values["Extra"] == 'remember the port<br><img src="x.jpg">'
+    assert export._with_image("cloze", {"Text": "t", "Extra": ""}, "x.jpg")["Extra"] \
+        == '<img src="x.jpg">'
