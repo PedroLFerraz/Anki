@@ -177,9 +177,13 @@ def _format_contract(card_type: str, wants_images: bool) -> str:
     the shape listed and silently dropped the fourth, every time.
     """
     shape = _load(f"format_{card_type}.txt").substitute(
-        image_field=', "image_query": "..."' if wants_images else ""
+        picture_fields=', "visual": null, "image_query": ""' if wants_images else ""
     ).strip()
-    return shape + (_load("image_hint.txt").template.rstrip() if wants_images else "")
+    if not wants_images:
+        return shape
+    hints = (_load("picture_hint.txt").template.rstrip(),
+             _load("image_hint.txt").template.rstrip())
+    return shape + "\n" + "\n\n".join(hints)
 
 
 def ad_hoc_request(profile: Profile, notes: list[Note], run_date: date, deck: str,

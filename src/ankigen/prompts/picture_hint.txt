@@ -1,0 +1,23 @@
+
+PICTURES
+Some answers stick better as a picture. For those cards set "visual" to one of:
+
+- a table, when the answer compares two to four things on a few properties:
+  {"table": [["", "TCP", "UDP"],
+             ["Delivery", "guaranteed, in order", "best effort"],
+             ["Connection", "handshake first", "none"]]}
+  The first row is the header. At most 5 rows and 4 columns, a few words a cell.
+- a diagram, when the answer is a structure, a flow or a sequence of states:
+  {"dot": "digraph { client -> proxy [label=\"request\"]; proxy -> server [label=\"forwards\"]; server -> client [label=\"response\"]; }"}
+  Graphviz DOT: at most 8 boxes, labels of one to four words, and edge labels
+  only where they say something. No colours, fonts or other styling.
+
+Every label and number in a visual must be as correct as the answer itself:
+it is fact-checked with the card. Leave "visual" null when the answer is a
+definition, a command, a flag, a default or a single fact, which is most
+cards. A visual earns its place by showing what the text cannot: the shape
+of a flow, or a comparison at a glance.
+
+"image_query" is for the rare card that needs a real picture instead — a
+screenshot of a tool, or a photograph of a physical thing. Leave it "" when
+the card has a visual, or when there is nothing to show.

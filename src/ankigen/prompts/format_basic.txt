@@ -1,2 +1,2 @@
 Respond with JSON only, shaped like this:
-{"cards": [{"question": "...", "answer": "..."$image_field}]}
+{"cards": [{"question": "...", "answer": "..."$picture_fields}]}

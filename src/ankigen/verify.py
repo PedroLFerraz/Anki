@@ -15,7 +15,7 @@ from datetime import date
 from importlib import resources
 from string import Template
 
-from ankigen import llm
+from ankigen import llm, visuals
 from ankigen.config import settings
 from ankigen.profile import Profile
 
@@ -27,10 +27,26 @@ UNVERIFIED = "unverified"
 
 def build_prompt(deck: str, level: str, cards: list[dict]) -> str:
     template = Template(resources.files("ankigen.prompts").joinpath("verify.txt").read_text(encoding="utf-8"))
-    listing = "\n".join(
-        f"{i}. Q: {c['front']}\n   A: {c['back']}" for i, c in enumerate(cards, start=1)
-    )
+    listing = "\n".join(_listed(i, c) for i, c in enumerate(cards, start=1))
     return template.substitute(level=level, deck=deck, cards=listing)
+
+
+def _listed(i: int, card: dict) -> str:
+    entry = f"{i}. Q: {card['front']}\n   A: {card['back']}"
+    visual = visuals.parse(card.get("visual_json"))
+    return entry + (f"\n   Visual ({visuals.describe(visual)})" if visual else "")
+
+
+def visual_verdicts(results: list, cards: list[dict]) -> list[bool | None]:
+    """Whether each card's visual survived the check: False only when the
+    checker said it was wrong, so a skipped answer does not cost a picture."""
+    by_index = {r.get("index"): r for r in results if isinstance(r, dict)} \
+        if isinstance(results, list) else {}
+    verdicts = []
+    for i, card in enumerate(cards, start=1):
+        said = by_index.get(i, {}).get("visual_ok")
+        verdicts.append(None if not card.get("visual_json") or said is None else bool(said))
+    return verdicts
 
 
 def judge(results: list, cards: list[dict]) -> list[tuple[bool, float | None, str]]:
@@ -68,7 +84,7 @@ def judge(results: list, cards: list[dict]) -> list[tuple[bool, float | None, st
 
 def run(wh, run_date: date, profile: Profile) -> dict:
     cards = wh.query(
-        "SELECT card_uid, request_id, deck, front, back FROM generated_cards "
+        "SELECT card_uid, request_id, deck, front, back, visual_json FROM generated_cards "
         "WHERE run_date = ? ORDER BY request_id, card_uid",
         [run_date],
     )
@@ -77,7 +93,8 @@ def run(wh, run_date: date, profile: Profile) -> dict:
     checker = settings.resolve_verify()
 
     if not profile.verify:
-        rows = [(run_date, c["card_uid"], True, None, "verification disabled") for c in cards]
+        rows = [(run_date, c["card_uid"], True, None, "verification disabled", None)
+                for c in cards]
     else:
         batches: dict[str, list[dict]] = {}
         for c in cards:
@@ -93,7 +110,9 @@ def run(wh, run_date: date, profile: Profile) -> dict:
                 )
                 data = result.data
                 # Asked for {"results": [...]}; a bare list is the same answer.
-                verdicts = judge(data if isinstance(data, list) else data.get("results", []), batch)
+                found = data if isinstance(data, list) else data.get("results", [])
+                verdicts = judge(found, batch)
+                pictures = visual_verdicts(found, batch)
             except llm.QuotaExhausted as e:
                 # Cards pass through unverified rather than being dropped, but
                 # the later batches do not queue up behind a cap that will not
@@ -102,17 +121,20 @@ def run(wh, run_date: date, profile: Profile) -> dict:
                 logger.warning("Checker quota exhausted; %d card(s) unverified: %s", len(batch), e)
                 checker_errors += 1
                 verdicts = [(True, None, f"{UNVERIFIED}: {e}")] * len(batch)
+                pictures = [None] * len(batch)
             except Exception as e:
                 logger.warning("Verification failed for %d card(s): %s", len(batch), e)
                 checker_errors += 1
                 verdicts = [(True, None, f"{UNVERIFIED}: {e}")] * len(batch)
+                pictures = [None] * len(batch)
             rows.extend(
-                (run_date, c["card_uid"], passed, score, reason)
-                for c, (passed, score, reason) in zip(batch, verdicts)
+                (run_date, c["card_uid"], passed, score, reason, picture)
+                for c, (passed, score, reason), picture in zip(batch, verdicts, pictures)
             )
 
     wh.replace_partition(
-        "verified_cards", run_date, ("run_date", "card_uid", "passed", "score", "reason"), rows
+        "verified_cards", run_date,
+        ("run_date", "card_uid", "passed", "score", "reason", "visual_ok"), rows,
     )
     dropped = [r for r in rows if not r[2]]
     return {
@@ -121,4 +143,5 @@ def run(wh, run_date: date, profile: Profile) -> dict:
         "dropped": len(dropped),
         "unverified": sum(1 for r in rows if (r[4] or "").startswith(UNVERIFIED)),
         "checker_errors": checker_errors,
+        "visuals_rejected": sum(1 for r in rows if r[5] is False),
     }

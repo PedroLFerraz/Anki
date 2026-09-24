@@ -108,6 +108,10 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      # Draws the diagrams the model describes for a card (visuals.py). Without
+      # it those cards fall back to searching the web for a picture.
+      - run: sudo apt-get install -y --no-install-recommends graphviz
+
       # [gemini] pulls google-genai, which is an extra because it is the one
       # provider that does not speak the OpenAI protocol. Without it the run
       # gets all the way to the first request before failing.
@@ -147,24 +151,38 @@ jobs:
           EMBEDDING_PROVIDER: fastembed
           LLM_PROVIDER: gemini
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash' }}
+          # Best first. Free tiers meter per model, so every model in the chain
+          # is another day's allowance; the last two are there for days when
+          # the flash models are all busy or spent, which happened by 11:00
+          # UTC on the first day of manual runs.
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3-flash-preview,gemma-4-31b-it' }}
           # A checker that is not the writer catches more, and free tiers
-          # meter per model, so this also doubles the daily allowance.
-          VERIFY_MODEL: ${{ vars.VERIFY_MODEL || 'gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.1-flash-lite' }}
+          # meter per model, so this also doubles the daily allowance. Its
+          # Gemma is not the writer's Gemma, for the same reason.
+          VERIFY_MODEL: ${{ vars.VERIFY_MODEL || 'gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.1-flash-lite,gemma-4-26b-a4b-it' }}
+          # The manual inputs arrive through the environment, never pasted into
+          # the script, so a topic with a quote in it is only ever a topic.
+          IN_RUN_DATE: ${{ inputs.run_date }}
+          IN_DECK: ${{ inputs.deck }}
+          IN_TOPIC: ${{ inputs.topic }}
+          IN_PROMPT: ${{ inputs.prompt }}
+          IN_COUNT: ${{ inputs.count }}
+          IN_STAGES: ${{ inputs.stages }}
         run: |
           # Built up rather than branched: the inputs are independent, and the
           # CLI already rejects a topic or prompt with no deck.
           when=()
-          [ -n "${{ inputs.run_date }}" ] && when+=(--date "${{ inputs.run_date }}")
+          [ -n "$IN_RUN_DATE" ] && when+=(--date "$IN_RUN_DATE")
           args=("${when[@]}")
-          [ -n "${{ inputs.deck }}" ]   && args+=(--deck "${{ inputs.deck }}")
-          [ -n "${{ inputs.topic }}" ]  && args+=(--topic "${{ inputs.topic }}")
-          [ -n "${{ inputs.prompt }}" ] && args+=(--prompt "${{ inputs.prompt }}")
-          [ -n "${{ inputs.count }}" ]  && args+=(--count "${{ inputs.count }}")
+          [ -n "$IN_DECK" ]   && args+=(--deck "$IN_DECK")
+          [ -n "$IN_TOPIC" ]  && args+=(--topic "$IN_TOPIC")
+          [ -n "$IN_PROMPT" ] && args+=(--prompt "$IN_PROMPT")
+          [ -n "$IN_COUNT" ]  && args+=(--count "$IN_COUNT")
           # Re-running only the later stages redoes a day's pictures without
           # writing new cards, and the push then refreshes them on the notes.
-          for stage in $(echo "${{ inputs.stages }}" | tr ',' ' '); do
-            args+=(--stage "$stage")
+          IFS=', ' read -r -a stages <<< "$IN_STAGES"
+          for stage in "${stages[@]}"; do
+            [ -n "$stage" ] && args+=(--stage "$stage")
           done
 
           python -m ankigen pull

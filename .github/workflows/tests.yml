@@ -17,6 +17,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      # [push] brings the anki package, so the sync tests run rather than skip.
+      # Graphviz, and [push] for the anki package, so the diagram and sync
+      # tests run rather than skip.
+      - run: sudo apt-get install -y --no-install-recommends graphviz
       - run: pip install ".[dev,gemini,push]"
       - run: python -m pytest -q

@@ -258,3 +258,27 @@ def test_an_unchanged_note_is_not_rewritten(tmp_path):
                                 "Image": "", "Reference": ""}})
     result = push.push_cards(col, [_detailed(image=None)], tmp_path)
     assert (result.updated, result.skipped) == (0, 1) and col.updated == []
+
+
+def test_a_drawn_visual_replaces_the_one_before_it(tmp_path):
+    import genanki
+    guid = genanki.guid_for("u1")
+    old = '<div class="ankigen-visual" style="x"><table><tr><td>old</td></tr></table></div>'
+    col = _Col(existing={guid: {"Question": "Q?", "Summary": "S", "Explanation": "E",
+                                "Image": old, "Reference": ""}})
+    card = _detailed(image=None)
+    card["visual_html"] = '<div class="ankigen-visual" style="x"><svg>new</svg></div>'
+    result = push.push_cards(col, [card], tmp_path)
+    assert result.updated == 1
+    assert col.notes[1].fields["Image"] == card["visual_html"]
+
+
+def test_a_visual_in_a_shared_field_leaves_your_text_alone(tmp_path):
+    import genanki
+    guid = genanki.guid_for("u2")
+    col = _Col(existing={guid: {"Text": "t", "Extra": 'my note<div class="ankigen-visual">'
+                                                      '<table></table></div>'}})
+    card = {"card_uid": "u2", "deck": "DS::SQL", "card_type": "cloze",
+            "fields_json": '{"Text": "t", "Extra": ""}', "tags": [], "image_filename": None}
+    push.push_cards(col, [card], tmp_path)
+    assert col.notes[1].fields["Extra"] == "my note"

@@ -16,7 +16,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable
 
-from ankigen import dedup, export, generate, images, ingest, llm, targeting, verify
+from ankigen import dedup, export, generate, images, ingest, llm, targeting, verify, visuals
 from ankigen.config import Settings, settings
 from ankigen.profile import Profile, load_profile
 from ankigen.warehouse import Warehouse
@@ -98,16 +98,42 @@ def stage_dedup(ctx: Context, run_date: date) -> dict:
 
 def stage_images(ctx: Context, run_date: date) -> dict:
     """Illustrate the cards that survived. Running after dedup means no image is
-    ever downloaded for a card that is about to be thrown away."""
+    ever downloaded for a card that is about to be thrown away.
+
+    A card the model described a picture for gets that picture drawn, and is
+    not searched for: the drawing is of exactly what the card says. Search is
+    for the cards left over that asked for a real picture.
+    """
     rows = ctx.wh.query(
-        """SELECT card_uid, deck, image_query, front, back FROM card_outcomes
-           WHERE run_date = ? AND outcome = 'kept' AND COALESCE(image_query, '') != ''
+        """SELECT card_uid, deck, image_query, visual_json, visual_ok, front, back
+           FROM card_outcomes
+           WHERE run_date = ? AND outcome = 'kept'
+             AND (COALESCE(image_query, '') != '' OR visual_json IS NOT NULL)
            ORDER BY card_uid""",
         [run_date],
     )
+    rows = [r for r in rows if ctx.profile.wants_images(r["deck"])]
+    drawn, drawn_rows, failures = set(), [], []
+    for r in rows:
+        visual = visuals.parse(r["visual_json"])
+        if not visual:
+            continue
+        kind = "table" if "table" in visual else "diagram"
+        if r["visual_ok"] is False:
+            drawn_rows.append((run_date, r["card_uid"], kind, None, "the checker found it wrong"))
+            continue
+        try:
+            drawn_rows.append((run_date, r["card_uid"], kind, visuals.to_html(visual), ""))
+            drawn.add(r["card_uid"])
+        except visuals.NotDrawable as e:
+            failures.append(str(e))
+            drawn_rows.append((run_date, r["card_uid"], kind, None, str(e)))
+    ctx.wh.replace_partition(
+        "card_visuals", run_date, ("run_date", "card_uid", "kind", "html", "detail"), drawn_rows)
+
     jobs = []
     for r in rows:
-        if not ctx.profile.wants_images(r["deck"]):
+        if r["card_uid"] in drawn or not (r["image_query"] or "").strip():
             continue
         context = ctx.profile.image_context_for(r["deck"])
         jobs.append((r["card_uid"], images.with_context(r["image_query"], context),
@@ -130,6 +156,8 @@ def stage_images(ctx: Context, run_date: date) -> dict:
     )
     found = [r for r in results if r.found]
     return {
+        "drawn": len(drawn),
+        "not_drawn": failures,
         "wanted": len(jobs),
         "found": len(found),
         "unchecked": sum(1 for r in found if (r.detail or "").startswith(images.UNCHECKED)),

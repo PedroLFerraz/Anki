@@ -2,4 +2,4 @@ Each card has a question, a one-line summary that directly answers it, and a
 2-4 sentence explanation that adds the reasoning or an example.
 
 Respond with JSON only, shaped like this:
-{"cards": [{"question": "...", "summary": "...", "explanation": "..."$image_field}]}
+{"cards": [{"question": "...", "summary": "...", "explanation": "..."$picture_fields}]}
