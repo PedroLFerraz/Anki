@@ -89,3 +89,24 @@ def test_target_without_ingest_fails_clearly(ctx):
 def test_unknown_stage(ctx):
     with pytest.raises(ValueError, match="Unknown stage"):
         pipeline.run(ctx, RUN_DATE, stages=["deploy"])
+
+
+def test_planning_a_day_that_has_run_leaves_its_cards_alone(ctx, monkeypatch, fake_llm,
+                                                           fake_embeddings):
+    """A fresh plan replaced the day's requests, and the cards generated from
+    the old ones dropped out of `report` and `push` without a word."""
+    from typer.testing import CliRunner
+
+    from ankigen import cli
+
+    pipeline.run(ctx, RUN_DATE, stages=["ingest", "target", "generate"])
+    before = ctx.wh.query("SELECT request_id FROM requests WHERE run_date = ?", [RUN_DATE])
+    monkeypatch.setattr(pipeline, "open_context", lambda *a, **k: ctx)
+    monkeypatch.setattr(ctx.wh, "close", lambda: None)
+
+    shown = CliRunner().invoke(cli.app, ["plan", "-d", str(RUN_DATE), "--prompts", "0"])
+    assert shown.exit_code == 0 and "already run" in shown.output
+    refused = CliRunner().invoke(cli.app, ["run", "-d", str(RUN_DATE), "--dry-run"])
+    assert refused.exit_code != 0
+    after = ctx.wh.query("SELECT request_id FROM requests WHERE run_date = ?", [RUN_DATE])
+    assert after == before

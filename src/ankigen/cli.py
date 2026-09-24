@@ -84,6 +84,11 @@ def run(
     if deck:
         ctx.ad_hoc = pipeline.AdHoc(deck=deck, topic=topic or "", extra=prompt or "", n=count)
     try:
+        if dry_run and _has_cards(ctx, d):
+            raise typer.BadParameter(
+                f"{d} already has cards, and planning it again would hide them from "
+                f"`report` and `push`. `ankigen plan -d {d}` shows the plan it ran with."
+            )
         results = pipeline.run(ctx, d, stages=stage, dry_run=dry_run)
     finally:
         ctx.wh.close()
@@ -100,20 +105,34 @@ def run(
         typer.echo(f"  report:  {results['report']['report']}  (ankigen report -d {d})")
 
 
+def _has_cards(ctx, d: date) -> bool:
+    return bool(ctx.wh.scalar("SELECT COUNT(*) FROM generated_cards WHERE run_date = ?", [d]))
+
+
 @app.command()
 def plan(
     run_date: Optional[str] = DateOpt,
     profile: Optional[str] = ProfileOpt,
     prompts: int = typer.Option(1, "--prompts", help="How many full prompts to print (0 for none)."),
 ):
-    """Show what today's run would generate, and the prompts it would send."""
+    """Show what today's run would generate, and the prompts it would send.
+
+    For a day that has already run, this shows the plan it ran with rather
+    than planning it again: a fresh plan replaces the day's requests, and the
+    cards generated from the old ones then drop out of `report` and `push`.
+    """
     d = _date(run_date)
     ctx = pipeline.open_context(profile)
     try:
-        pipeline.run(ctx, d, dry_run=True)
+        ran = _has_cards(ctx, d)
+        if not ran:
+            pipeline.run(ctx, d, dry_run=True)
         reqs = ctx.wh.query("SELECT * FROM requests WHERE run_date = ? ORDER BY deck", [d])
     finally:
         ctx.wh.close()
+
+    if ran:
+        typer.echo(f"\n{d} has already run; this is the plan it ran with.")
 
     typer.echo(f"\nPlan for {d}  ({sum(r['n'] for r in reqs)} cards across {len(reqs)} requests)\n")
     for r in reqs:
