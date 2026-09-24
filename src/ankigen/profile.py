@@ -37,6 +37,10 @@ class DeckTarget(BaseModel):
     deck: str
     # Fetch an illustration when the model judges one genuinely helps.
     images: bool | None = None
+    # Put in front of every image search for this deck, e.g. "Apache Airflow".
+    # The model writing the query knows the deck and still shortens the name,
+    # and a search engine reads "airflow pool" as a swimming pool.
+    image_context: str = ""
     daily_quota: int = Field(default=5, ge=0)
     card_type: CardType = "basic"
     topics: list[str] = Field(default_factory=list)
@@ -74,6 +78,12 @@ class Profile(BaseModel):
             if target.deck == deck:
                 return self.images if target.images is None else target.images
         return self.images
+
+    def image_context_for(self, deck: str) -> str:
+        for target in self.decks:
+            if target.deck == deck:
+                return target.image_context
+        return ""
 
     def deck_for(self, deck: str) -> str:
         """The Anki deck a generated card is filed under."""

@@ -388,3 +388,25 @@ def test_documentation_is_tried_before_a_random_blog(monkeypatch):
     assert pages[0].startswith("https://airflow.apache.org")
     assert pages[1].startswith("https://stackoverflow.com")
     assert pages[2].startswith("https://someblog")      # kept, just tried last
+
+
+def test_deck_context_goes_in_front_of_the_query_once():
+    assert (images.with_context("airflow pool slots diagram", "Apache Airflow")
+            == "Apache Airflow pool slots diagram")
+    assert (images.with_context("S3 lifecycle diagram", "AWS")
+            == "AWS S3 lifecycle diagram")
+
+
+def test_no_context_leaves_the_query_alone():
+    assert images.with_context("kubernetes pod lifecycle", "") == "kubernetes pod lifecycle"
+    assert images.with_context("", "Apache Airflow") == ""
+
+
+def test_profile_finds_the_context_for_a_deck():
+    profile = Profile.model_validate({"decks": [
+        {"deck": "Data Platform::Airflow", "image_context": "Apache Airflow"},
+        {"deck": "DS::SQL"},
+    ]})
+    assert profile.image_context_for("Data Platform::Airflow") == "Apache Airflow"
+    assert profile.image_context_for("DS::SQL") == ""
+    assert profile.image_context_for("Not::A::Deck") == ""

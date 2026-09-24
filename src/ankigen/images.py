@@ -60,6 +60,21 @@ class ImageResult:
 
 # ----------------------------------------------------------------- search
 
+def with_context(query: str, context: str) -> str:
+    """The query with the deck's subject in front, said once.
+
+    Words of the context already in the query are taken out rather than
+    skipped, so "airflow pool slots diagram" becomes "Apache Airflow pool
+    slots diagram" and not "Apache Airflow airflow pool slots diagram".
+    """
+    context = (context or "").strip()
+    if not context or not (query or "").strip():
+        return query
+    have = {w.lower() for w in context.split()}
+    rest = [w for w in query.split() if w.lower() not in have]
+    return " ".join([context, *rest])
+
+
 def _width(value) -> int:
     """`ddgs` falls back to other engines when DuckDuckGo itself fails, and they
     do not agree on the type of `width`: Bing reports it as a string, which once

@@ -105,7 +105,9 @@ def stage_images(ctx: Context, run_date: date) -> dict:
            ORDER BY card_uid""",
         [run_date],
     )
-    jobs = [(r["card_uid"], r["image_query"], f"{r['front']} — {r['back'] or ''}")
+    jobs = [(r["card_uid"],
+             images.with_context(r["image_query"], ctx.profile.image_context_for(r["deck"])),
+             f"{r['front']} — {r['back'] or ''}")
             for r in rows if ctx.profile.wants_images(r["deck"])]
     # Someone has to look at the picture: a page whose title matches the query
     # routinely carries an image that has nothing to do with it. The checker's

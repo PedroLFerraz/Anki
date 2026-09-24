@@ -30,7 +30,9 @@ global_quota: 16
 verify: true
 
 # Fetch an illustration when the model judges one genuinely helps.
-# Per-deck `images: false` opts a deck out.
+# Per-deck `images: false` opts a deck out, and `image_context` is put in
+# front of that deck's image searches, so "airflow pool" is searched as
+# "Apache Airflow pool" and not as a swimming pool.
 images: true
 
 # Empty = notes go straight into the deck above, tagged ankigen::run_<date>,
@@ -69,6 +71,7 @@ decks:
   # The vocabulary and the trade-offs, before any particular tool.
   - deck: Data Platform::Fundamentals
     new_deck: true
+    image_context: "data engineering"
     daily_quota: 4
     card_type: detailed
     topics:
@@ -96,6 +99,7 @@ decks:
 
   - deck: Data Platform::Airflow
     new_deck: true
+    image_context: "Apache Airflow"
     daily_quota: 3
     card_type: detailed
     topics:
@@ -120,6 +124,7 @@ decks:
 
   - deck: Data Platform::Docker
     new_deck: true
+    image_context: "Docker"
     daily_quota: 3
     card_type: detailed
     topics:
@@ -138,6 +143,7 @@ decks:
 
   - deck: Data Platform::Kubernetes
     new_deck: true
+    image_context: "Kubernetes"
     daily_quota: 3
     card_type: detailed
     topics:
@@ -156,6 +162,7 @@ decks:
 
   - deck: Data Platform::AWS
     new_deck: true
+    image_context: "AWS"
     daily_quota: 3
     card_type: cloze
     topics:
