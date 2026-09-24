@@ -198,3 +198,55 @@ def build_report(wh, run_date: date) -> dict:
         "stages": stages,
         "stage_details": details,
     }
+
+
+def markdown_summary(wh, run_date: date) -> str:
+    """What a run did, for the page GitHub shows for it: read on a phone, so
+    the counts first and the cards folded away underneath."""
+    cards = wh.query(
+        """SELECT deck, front, outcome, verify_reason, dup_reason, visual_kind,
+                  image_filename, model
+           FROM card_outcomes c
+           LEFT JOIN (SELECT card_uid, model FROM generated_cards WHERE run_date = ?) g
+                USING (card_uid)
+           WHERE c.run_date = ? ORDER BY deck, front""",
+        [run_date, run_date],
+    )
+    if not cards:
+        return f"### No cards for {run_date}\n\nNothing was generated. See the log for why.\n"
+
+    kept = [c for c in cards if c["outcome"] == "kept"]
+    lines = [f"### {len(kept)} new card(s) for {run_date}", "",
+             "| Deck | Kept | Pictures |", "|---|---|---|"]
+    for deck in sorted({c["deck"] for c in cards}):
+        mine = [c for c in kept if c["deck"] == deck]
+        drawn = sum(1 for c in mine if c["visual_kind"])
+        found = sum(1 for c in mine if not c["visual_kind"] and c["image_filename"])
+        pictures = ", ".join(p for p in (f"{drawn} drawn" if drawn else "",
+                                         f"{found} found" if found else "") if p) or "none"
+        lines.append(f"| {deck} | {len(mine)} | {pictures} |")
+
+    lines += ["", "<details><summary>The cards</summary>", ""]
+    for c in kept:
+        picture = c["visual_kind"] or ("picture" if c["image_filename"] else "")
+        lines.append(f"- **{c['deck'].split('::')[-1]}** · {_one_line(c['front'])}"
+                     + (f" *({picture})*" if picture else ""))
+    lines += ["", "</details>", ""]
+
+    dropped = [c for c in cards if c["outcome"].startswith("dropped_")]
+    if dropped:
+        lines += [f"**Dropped {len(dropped)}:**", ""]
+        for c in dropped:
+            why = c["verify_reason"] if c["outcome"] == "dropped_verify" else c["dup_reason"]
+            lines.append(f"- {_one_line(c['front'])} — *{_one_line(why or '')}*")
+        lines.append("")
+
+    models = sorted({c["model"] for c in cards if c["model"]})
+    if models:
+        lines.append(f"Written by {', '.join(f'`{m}`' for m in models)}.")
+    return "\n".join(lines) + "\n"
+
+
+def _one_line(text: str, limit: int = 140) -> str:
+    text = " ".join(str(text).replace("|", "/").split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"

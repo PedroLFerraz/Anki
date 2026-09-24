@@ -184,3 +184,17 @@ def test_a_drawn_visual_goes_in_the_picture_field(wh, tmp_path, monkeypatch, cfg
     assert values["Image"].startswith('<div class="ankigen-visual"')
     cloze = export.with_picture("cloze", {"Text": "t", "Extra": "hint"}, card["visual_html"])
     assert cloze["Extra"].startswith("hint<div")          # a block needs no <br>
+
+
+def test_the_run_summary_counts_drawn_pictures_and_drops(wh, monkeypatch, cfg, profile):
+    _kept(wh, "u1", CLASSES)
+    monkeypatch.setattr(pipeline.images, "fetch_many", lambda jobs, media_dir, **k: [])
+    pipeline.stage_images(pipeline.Context(cfg, profile, wh), RUN_DATE)
+    summary = export.markdown_summary(wh, RUN_DATE)
+    assert summary.startswith(f"### 1 new card(s) for {RUN_DATE}")
+    assert "| Data Platform::AWS | 1 | 1 drawn |" in summary
+    assert "*(table)*" in summary and "Written by `m`." in summary
+
+
+def test_an_empty_day_says_so_rather_than_drawing_an_empty_table(wh):
+    assert export.markdown_summary(wh, RUN_DATE).startswith(f"### No cards for {RUN_DATE}")
