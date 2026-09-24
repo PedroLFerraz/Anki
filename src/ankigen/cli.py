@@ -192,6 +192,19 @@ def report(run_date: Optional[str] = DateOpt):
     typer.echo(f"\nPackage: {rep['apkg'] or '(none)'}")
 
 
+@app.command()
+def summary(run_date: Optional[str] = DateOpt):
+    """A run's cards in Markdown: counts per deck, pictures, drops. The daily
+    workflow puts it on the run's page, which is what a phone shows."""
+    from ankigen.export import markdown_summary
+
+    ctx = pipeline.open_context()
+    try:
+        typer.echo(markdown_summary(ctx.wh, _date(run_date)))
+    finally:
+        ctx.wh.close()
+
+
 @app.command("pull")
 def pull():
     """Bring the working copy of your collection up to date from AnkiWeb.

@@ -192,6 +192,18 @@ jobs:
           # working is merged before the new cards go up.
           python -m ankigen push "${when[@]}"
 
+      # The run's page on GitHub, which is what the app on a phone shows:
+      # what was written, what got a picture, what was dropped and why.
+      - name: Summarise the run
+        if: always()
+        continue-on-error: true
+        env:
+          DATA_DIR: data
+          ANKIGEN_PROFILE: profiles/default.yaml
+          IN_RUN_DATE: ${{ inputs.run_date }}
+        run: |
+          python -m ankigen summary ${IN_RUN_DATE:+--date "$IN_RUN_DATE"} >> "$GITHUB_STEP_SUMMARY"
+
       # Only on success: a failed run's working copy may be empty or
       # half-synced, and caching that poisons every run after it.
       - name: Save the collection
