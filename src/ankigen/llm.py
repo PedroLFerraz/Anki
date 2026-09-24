@@ -161,7 +161,8 @@ def extract_json(text: str) -> str:
 
 def _looks_like_json_mode_rejection(err: Exception) -> bool:
     msg = str(err).lower()
-    return any(tok in msg for tok in ("response_format", "json_object", "json mode", "json_schema"))
+    return any(tok in msg for tok in ("response_format", "json_object", "json mode", "json_schema",
+                                      "response_mime_type"))
 
 
 def _usage(response) -> tuple[int, int]:
@@ -224,13 +225,26 @@ def _call_one_model(prompt: str, cfg: dict, model: str, max_retries: int) -> LLM
                 client = _get_gemini_client()
                 if not client:
                     raise RuntimeError("No GOOGLE_API_KEY configured")
-                response = client.models.generate_content(
-                    model=model, contents=prompt,
-                    config=types.GenerateContentConfig(response_mime_type="application/json"),
-                )
+                json_mode = model not in _no_json_mode
+                try:
+                    response = client.models.generate_content(
+                        model=model, contents=prompt,
+                        config=types.GenerateContentConfig(response_mime_type="application/json")
+                        if json_mode else None,
+                    )
+                except Exception as e:
+                    # Some models on the same API (Gemma, at times) refuse JSON
+                    # mode with a 400, which would otherwise end the whole chain.
+                    if not (json_mode and _looks_like_json_mode_rejection(e)):
+                        raise
+                    logger.info("%s rejects JSON mode; parsing JSON out of plain text.", model)
+                    _no_json_mode.add(model)
+                    json_mode = False
+                    response = client.models.generate_content(model=model, contents=prompt)
                 meta = getattr(response, "usage_metadata", None)
+                text = response.text if json_mode else extract_json(response.text)
                 return LLMResult(
-                    json.loads(response.text), model,
+                    json.loads(text), model,
                     getattr(meta, "prompt_token_count", 0) or 0,
                     getattr(meta, "candidates_token_count", 0) or 0,
                 )

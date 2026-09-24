@@ -478,3 +478,23 @@ def test_a_bare_list_of_verdicts_is_read_like_the_wrapped_one(wh, monkeypatch):
     ], "m"))
     result = verify.run(wh, RUN_DATE, Profile.model_validate({"decks": [{"deck": "DS::SQL"}]}))
     assert result["passed"] == 1 and result["dropped"] == 1 and result["unverified"] == 0
+
+
+def test_a_gemini_model_that_refuses_json_mode_is_asked_again_without_it(monkeypatch):
+    """Gemma on the same API has refused JSON mode with a 400; without this
+    the refusal ended the whole chain as a "real error"."""
+    calls = []
+
+    class _Models:
+        def generate_content(self, model, contents, config=None):
+            calls.append(config is not None)
+            if config is not None:
+                raise RuntimeError("400 INVALID_ARGUMENT: JSON mode is not enabled for models/gemma")
+            return type("R", (), {"text": 'Sure! ```json\n{"cards": []}\n```', "usage_metadata": None})()
+
+    monkeypatch.setattr(llm, "_get_gemini_client", lambda: type("C", (), {"models": _Models()})())
+    monkeypatch.setattr(llm, "_no_json_mode", set())
+    result = llm._call_one_model("p", {"provider": "gemini"}, "gemma-4-31b-it", 2)
+    assert result.data == {"cards": []} and calls == [True, False]
+    llm._call_one_model("p", {"provider": "gemini"}, "gemma-4-31b-it", 2)
+    assert calls == [True, False, False]          # remembered: not asked in JSON mode again
