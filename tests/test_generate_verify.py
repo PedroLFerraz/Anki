@@ -357,17 +357,20 @@ def test_quota_exhaustion_stops_the_remaining_requests(wh, monkeypatch):
 def chain(monkeypatch):
     """A three-model preference order, with nothing marked spent."""
     monkeypatch.setattr(llm, "_spent", set())
+    monkeypatch.setattr(llm, "_busy_until", {})
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
     return {"provider": "gemini", "base_url": None, "api_key": "k",
             "model": "best", "models": ["best", "middling", "worst"], "needs_key": True}
 
 
-def _answers(monkeypatch, behaviour):
+def _answers(monkeypatch, behaviour, retries=None):
     """behaviour: {model: Exception to raise, or None to answer}."""
     seen = []
 
     def one(prompt, cfg, model, max_retries):
         seen.append(model)
+        if retries is not None:
+            retries[model] = max_retries
         outcome = behaviour.get(model)
         if isinstance(outcome, Exception):
             raise outcome
@@ -402,6 +405,46 @@ def test_a_spent_model_is_not_asked_again(chain, monkeypatch):
     llm.call_json("p", cfg=chain)
     llm.call_json("p", cfg=chain)
     assert seen == ["best", "middling", "middling"]      # not asked twice
+
+
+def test_an_overloaded_model_goes_to_the_back_for_later_requests(chain, monkeypatch):
+    """Each request used to start at the top again, and sat through the same
+    minutes of 503s from the same two models before the third answered."""
+    seen = _answers(monkeypatch, {"best": RuntimeError("503 UNAVAILABLE high demand")})
+    llm.call_json("p", cfg=chain)
+    llm.call_json("p", cfg=chain)
+    assert seen == ["best", "middling", "middling"]
+
+
+def test_an_overloaded_model_is_tried_again_once_it_has_rested(chain, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(llm.time, "monotonic", lambda: clock[0])
+    behaviour = {"best": RuntimeError("503 UNAVAILABLE high demand")}
+    seen = _answers(monkeypatch, behaviour)
+    llm.call_json("p", cfg=chain)
+    clock[0] += llm.BUSY_COOLDOWN + 1
+    behaviour.clear()
+    assert llm.call_json("p", cfg=chain).data == {"ok": "best"}
+    assert seen == ["best", "middling", "best"]
+
+
+def test_only_the_last_model_left_gets_the_full_retry_budget(chain, monkeypatch):
+    retries = {}
+    busy = RuntimeError("503 UNAVAILABLE high demand")
+    _answers(monkeypatch, {"best": busy, "middling": busy}, retries)
+    llm.call_json("p", cfg=chain, max_retries=5)
+    assert retries == {"best": llm.FALLTHROUGH_ATTEMPTS,
+                       "middling": llm.FALLTHROUGH_ATTEMPTS, "worst": 5}
+
+
+def test_when_every_model_is_busy_they_are_all_still_tried(chain, monkeypatch):
+    busy = RuntimeError("503 UNAVAILABLE high demand")
+    seen = _answers(monkeypatch, {"best": busy, "middling": busy, "worst": busy})
+    with pytest.raises(RuntimeError, match="503"):
+        llm.call_json("p", cfg=chain)
+    with pytest.raises(RuntimeError, match="503"):
+        llm.call_json("p", cfg=chain)
+    assert seen == ["best", "middling", "worst"] * 2
 
 
 def test_a_real_error_is_not_papered_over_by_the_chain(chain, monkeypatch):

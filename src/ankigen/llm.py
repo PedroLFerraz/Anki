@@ -40,6 +40,17 @@ _DAILY_QUOTA = re.compile(r"per[-_ ]?day", re.IGNORECASE)
 # spends the retry budget to be told the same thing.
 _spent: set[str] = set()
 
+# Models that just failed to answer because they were overloaded, and until
+# when (time.monotonic()) they go to the back of the chain. Without this every
+# request started again at the top and sat through the same minutes of 503s:
+# a CI run spent four minutes per request finding out that 3.8 and 3.7 were
+# busy before 3.6 answered in seconds, and ran into the job timeout.
+_busy_until: dict[str, float] = {}
+BUSY_COOLDOWN = 600
+# While another model is left to try, a busy one gets this many attempts
+# rather than the full budget: falling through is cheaper than waiting.
+FALLTHROUGH_ATTEMPTS = 2
+
 
 class QuotaExhausted(RuntimeError):
     """The provider's allowance for the day is gone. Nothing to wait for."""
@@ -255,9 +266,11 @@ def call_json(prompt: str, max_retries: int = 5, cfg: dict | None = None) -> LLM
     503 for minutes at a time while the previous one replies instantly. Either
     way the answer is the same: move down the list and keep going.
 
-    Retries are patient within a model — a daily batch has nobody waiting on it
-    — but a model whose allowance is gone is skipped for the rest of the
-    process rather than asked again once per request.
+    A model whose allowance is gone is skipped for the rest of the process
+    rather than asked again once per request. One that was overloaded goes to
+    the back of the chain for a while, and while there is somewhere else to
+    go a busy model gets a short retry, not the full one: only the last model
+    left is waited on patiently.
     """
     cfg = cfg or settings.resolve_llm()
     chain = [m for m in (cfg.get("models") or [cfg["model"]]) if m]
@@ -266,11 +279,17 @@ def call_json(prompt: str, max_retries: int = 5, cfg: dict | None = None) -> LLM
         raise QuotaExhausted(
             f"every configured model is out of quota for today: {', '.join(chain)}"
         )
+    now = time.monotonic()
+    # Stable, so the preference order holds within the rested and the busy.
+    usable.sort(key=lambda m: _busy_until.get(m, 0) > now)
 
     last: Exception | None = None
-    for model in usable:
+    for i, model in enumerate(usable):
+        retries = max_retries if i == len(usable) - 1 else min(max_retries, FALLTHROUGH_ATTEMPTS)
         try:
-            return _call_one_model(prompt, cfg, model, max_retries)
+            result = _call_one_model(prompt, cfg, model, retries)
+            _busy_until.pop(model, None)
+            return result
         except QuotaExhausted as e:
             logger.warning("%s is out of quota for today; falling back", model)
             _spent.add(model)
@@ -279,6 +298,7 @@ def call_json(prompt: str, max_retries: int = 5, cfg: dict | None = None) -> LLM
             if not _is_retryable(str(e)):
                 raise                       # a real error: bad key, bad request
             logger.warning("%s did not answer (%s); falling back", model, str(e)[:60])
+            _busy_until[model] = time.monotonic() + BUSY_COOLDOWN
             last = e
 
     if isinstance(last, QuotaExhausted):
@@ -317,6 +337,8 @@ def check_image(image: bytes, card: str, query: str, cfg: dict | None = None) ->
     chain = [m for m in (cfg.get("models") or [cfg["model"]]) if m and m not in _spent]
     if not chain:
         raise QuotaExhausted("no model left to check images with")
+    now = time.monotonic()
+    chain.sort(key=lambda m: _busy_until.get(m, 0) > now)
 
     if cfg["provider"] == "gemini":
         from google.genai import types
@@ -338,7 +360,9 @@ def check_image(image: bytes, card: str, query: str, cfg: dict | None = None) ->
             except Exception as e:
                 if _is_daily_quota(str(e)):
                     _spent.add(model)
-                elif not _is_retryable(str(e)):
+                elif _is_retryable(str(e)):
+                    _busy_until[model] = time.monotonic() + BUSY_COOLDOWN
+                else:
                     raise
                 last = e
         raise last

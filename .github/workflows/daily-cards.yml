@@ -16,8 +16,13 @@
 name: daily cards
 
 on:
+  # GitHub's scheduler is best-effort: at the top of the hour it is at its
+  # busiest and drops runs outright, which is how the first 09:00 run never
+  # happened. So an odd minute, and a second chance later that stands down if
+  # the first one worked (see `gate`).
   schedule:
-    - cron: "0 9 * * *"      # 09:00 UTC = 06:00 America/Sao_Paulo
+    - cron: "17 8 * * *"     # 08:17 UTC = 05:17 America/Sao_Paulo
+    - cron: "43 11 * * *"    # the backup, 08:43 local
   workflow_dispatch:
     inputs:
       deck:
@@ -46,7 +51,34 @@ concurrency:                  # DuckDB takes one writer, and so does the cache
   cancel-in-progress: false
 
 jobs:
+  # Only the backup schedule is ever turned away: a manual run always goes
+  # ahead, and so does the first scheduled one. Only scheduled successes count,
+  # since a manual run for one deck is not the day's plan.
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      go: ${{ steps.check.outputs.go }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          go=true
+          if [ "${{ github.event_name }}" = schedule ]; then
+            today=$(date -u +%F)
+            done=$(gh api "repos/${{ github.repository }}/actions/workflows/daily-cards.yml/runs?event=schedule&status=success&created=>=$today" --jq .total_count)
+            if [ "$done" -gt 0 ]; then
+              echo "A scheduled run already succeeded today; standing down."
+              go=false
+            fi
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+
   generate:
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
