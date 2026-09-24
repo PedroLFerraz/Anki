@@ -44,15 +44,39 @@ Then Actions → **daily cards** → Run workflow. After that it runs daily at
 08:17 UTC (05:17 in São Paulo), with a backup at 11:43 UTC that does nothing if
 the first one already succeeded.
 
-## Running one deck on demand
+## From your phone
 
-The manual trigger takes four optional inputs: **deck**, **topic**, **prompt**
-and **count**. Give a deck and it writes for that deck instead of the day's
-plan; topic and prompt steer it further. The same thing locally:
+Everything below works from the GitHub app: Actions, pick the workflow, then
+**Run workflow**.
+
+**More cards on one subject, now.** *daily cards* with **deck** set (and
+optionally **topic**, **prompt**, **count**) writes for that deck instead of
+the day's plan. The cards reach your phone on its next sync. The same thing
+locally:
 
 ```bash
 ankigen run --deck "Data Platform::Kubernetes" --topic "probes" --prompt "Contrast what happens to traffic when each one fails."
 ```
+
+**A new subject in the daily rotation.** *add a theme* with a **deck** name and
+a sentence **about** it. The model plans an ordered list of topics in the same
+shape as your other decks and proposes it as a change to the profile: open the
+run's summary for the link and the topics. Merge it to start the subject, or
+close it. Locally: `ankigen add-theme --deck "..." --about "..."`.
+
+**Redo a day's pictures.** *daily cards* with **stages** set to
+`images,export,report` and that day's **run_date**. No new cards are written;
+the push puts the new pictures on the day's notes and leaves everything else
+alone.
+
+## Pictures
+
+Most pictures are drawn from the card itself: when an answer is a comparison
+or a flow, the model that writes the card also describes a table or a
+Graphviz diagram, the checker verifies it with the card, and it is drawn into
+the note as HTML or SVG in the card's own colours. Cards that need a real
+picture (a screenshot, a photograph) are searched for on the web, and the
+result is shown to a vision model with the card before it is used.
 
 ## What to know
 
@@ -60,10 +84,15 @@ ankigen run --deck "Data Platform::Kubernetes" --topic "probes" --prompt "Contra
 working copy that would mean downloading your whole media folder, and media
 sync runs in the background, where closing the collection cancelled it — the
 first pushed pictures arrived as broken-image icons for exactly that reason.
-Each picture is re-encoded small (640px JPEG) and stored in the note as a
-`data:` URI instead. To redo a day's pictures, run the workflow with `stages`
-set to `images,export,report` and that day's `run_date`: the push refreshes
-the picture on notes it already made, and leaves the rest of each note alone.
+Drawn pictures are a few KB of SVG or HTML, and a searched picture is
+re-encoded small (640px JPEG) and stored as a `data:` URI. A push replaces a
+picture only with a newer one, and never takes a working picture off a note.
+
+**The model chain has backups.** Free tiers meter each model separately, so the
+run walks down `GEMINI_MODEL` (a repository variable here) as models run out or
+stay busy, then tries `gemini-3-flash-preview` and Gemma 4, which have daily
+allowances of their own. A busy model is tried once and skipped for ten
+minutes: on the free tier even a 503 seems to count against the day.
 
 **The sync refuses to guess.** If AnkiWeb reports that the runner's copy and
 yours have diverged beyond a normal merge, the job stops. Resolving that means
