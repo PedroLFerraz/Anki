@@ -1,0 +1,31 @@
+You are planning a new subject in one learner's flashcard collection. Cards
+for it will be written a few a day, one topic per day, in the order you give.
+
+ABOUT THE LEARNER
+- Level: $level
+- Goals: $goals
+
+THE NEW DECK: $deck
+$about
+THEIR OTHER SUBJECTS, WITH THEIR FIRST TOPICS
+Do not repeat what these already cover; build on them where it helps.
+$existing
+
+Plan $n topics, ordered the way you would teach the subject: the vocabulary and
+the problem it solves first, then how it works, then how it fails and how it
+is operated, then the advanced material. Each topic is a short phrase, like
+"liveness, readiness and startup probes" or "idempotent tasks and safe
+backfills": specific enough to write five cards about, broad enough not to be
+a single fact. Prefer what a practitioner uses and gets asked about in an
+interview over version-specific trivia.
+
+Also give:
+- "instructions": one or two sentences to steer the writing for this subject
+  in particular, or "" if there is nothing to add.
+- "image_context": the subject's full name as a search engine needs it, for
+  example "Apache Airflow" rather than "Airflow", or "Kubernetes".
+- "card_type": "detailed" for a subject about how and why things work,
+  "cloze" for one heavy on names, numbers and limits, "basic" otherwise.
+
+Respond with JSON only, shaped like this:
+{"topics": ["...", "..."], "instructions": "...", "image_context": "...", "card_type": "detailed"}
