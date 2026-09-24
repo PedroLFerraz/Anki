@@ -20,9 +20,10 @@ def _auth(endpoint=""):
 class _Col:
     """Just enough collection to drive sync and add_note."""
 
-    def __init__(self, required=Response.NORMAL_SYNC, existing=(), endpoint=""):
+    def __init__(self, required=Response.NORMAL_SYNC, existing=(), endpoint="", note_count=0):
         self.required = required
         self.endpoint = endpoint
+        self.note_count = note_count
         self.existing = set(existing)
         self.added = []
         self.uploads = []
@@ -43,7 +44,9 @@ class _Col:
         self.uploads.append(upload)
 
     # --- collection bits used by push_cards
-    def scalar(self, _sql, guid):
+    def scalar(self, sql, guid=None):
+        if "COUNT(*) FROM notes" in sql:
+            return self.note_count
         return 1 if guid in self.existing else None
 
     def id(self, name):
@@ -114,3 +117,19 @@ def test_nothing_is_ever_uploaded_wholesale(tmp_path, monkeypatch):
 
     push.open_collection(_auth())
     assert col.uploads == [False]          # downloaded, never uploaded
+
+
+def test_an_empty_working_copy_is_downloaded_again(tmp_path, monkeypatch):
+    """A failed run cached an empty collection file; every run after it then
+    believed it already had yours."""
+    monkeypatch.setattr(push.settings, "data_dir", str(tmp_path), raising=False)
+
+    empty = _Col(note_count=0)
+    monkeypatch.setattr("anki.collection.Collection", lambda path: empty)
+    push.open_collection(_auth())
+    assert empty.uploads == [False]        # noticed it was empty, fetched a copy
+
+    full = _Col(note_count=8346)
+    monkeypatch.setattr("anki.collection.Collection", lambda path: full)
+    push.open_collection(_auth())
+    assert full.uploads == []              # already had one, left it alone

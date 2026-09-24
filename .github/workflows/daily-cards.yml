@@ -133,8 +133,10 @@ jobs:
           # working is merged before the new cards go up.
           python -m ankigen push "${when[@]}"
 
+      # Only on success: a failed run's working copy may be empty or
+      # half-synced, and caching that poisons every run after it.
       - name: Save the collection
-        if: always()
+        if: success()
         uses: actions/cache/save@v6
         with:
           path: data/anki

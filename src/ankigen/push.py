@@ -112,13 +112,18 @@ def open_collection(auth=None):
 
     path = Path(settings.data_dir) / WORKING_COPY
     path.parent.mkdir(parents=True, exist_ok=True)
-    first_time = not path.exists()
     col = Collection(str(path))
     if auth is None:
         return col, auth
 
+    # "Do we have a copy" is about content, not about the file existing.
+    # Opening a path creates an empty collection there, and a failed run once
+    # cached that empty file — after which every later run believed it already
+    # had your collection and refused to sync against the real one.
+    empty = not (col.db.scalar("SELECT COUNT(*) FROM notes") or 0)
+
     auth = resolve_endpoint(col, auth)
-    if first_time:
+    if empty:
         logger.info("No working copy yet; downloading your collection from AnkiWeb.")
         # The only full transfer this module performs, and only ever downward.
         col.full_upload_or_download(auth=auth, server_usn=None, upload=False)
