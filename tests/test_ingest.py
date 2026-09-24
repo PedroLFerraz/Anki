@@ -150,3 +150,17 @@ def test_ingest_is_idempotent_and_revlog_incremental(wh, modern_collection, tmp_
     assert wh.scalar("SELECT COUNT(*) FROM raw_notes") == 6          # replaced, not appended
     assert first["new_reviews"] == 6 and second["new_reviews"] == 0  # incremental by id
     assert len(load_notes(wh, RUN_DATE)) == 6
+
+
+def test_old_snapshots_are_dropped_and_recent_ones_kept(wh, modern_collection, tmp_path):
+    """Only the run's own snapshot is read; keeping every day's forever grew
+    the warehouse that rides in the Actions cache by megabytes a day."""
+    from datetime import timedelta
+
+    days = [RUN_DATE - timedelta(days=d) for d in (40, 20, 14, 3, 0)]
+    pruned = sum(ingest_mod.ingest(wh, day, modern_collection, tmp_path / "raw")
+                 ["pruned_snapshots"] for day in days)
+    kept = [r["run_date"] for r in wh.query(
+        "SELECT DISTINCT run_date FROM raw_notes ORDER BY run_date")]
+    assert kept == [RUN_DATE - timedelta(days=14), RUN_DATE - timedelta(days=3), RUN_DATE]
+    assert pruned == 2

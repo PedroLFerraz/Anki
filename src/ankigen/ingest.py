@@ -17,7 +17,7 @@ import sqlite3
 import threading
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -338,6 +338,25 @@ NOTE_COLUMNS = (
 )
 
 
+# Every stage after ingest reads only its own run_date's snapshot, so older
+# ones are kept only long enough to re-run a recent day without ingesting it
+# again. Kept forever, a full snapshot of every day is the one thing in the
+# warehouse that grows without bound — and the warehouse rides in the Actions
+# cache, restored and saved on every run.
+SNAPSHOT_RETENTION_DAYS = 14
+
+
+def prune_snapshots(wh, run_date: date, keep_days: int = SNAPSHOT_RETENTION_DAYS) -> int:
+    """Drop note snapshots older than `keep_days` before `run_date`. Returns
+    how many days' snapshots went."""
+    cutoff = run_date - timedelta(days=keep_days)
+    gone = wh.scalar("SELECT COUNT(DISTINCT run_date) FROM raw_notes WHERE run_date < ?",
+                     [cutoff]) or 0
+    if gone:
+        wh.con.execute("DELETE FROM raw_notes WHERE run_date < ?", [cutoff])
+    return gone
+
+
 def ingest(wh, run_date: date, collection: str | Path, raw_dir: str | Path) -> dict:
     """Snapshot the collection and load it: notes as a full daily snapshot,
     reviews incrementally (only ids newer than what's already loaded)."""
@@ -349,6 +368,7 @@ def ingest(wh, run_date: date, collection: str | Path, raw_dir: str | Path) -> d
          n.content_hash, n.lapses, n.ease, n.reps, n.interval_days, n.queue, n.modified_at)
         for n in notes
     ])
+    pruned = prune_snapshots(wh, run_date)
 
     last_review = wh.scalar("SELECT COALESCE(MAX(review_id), 0) FROM raw_revlog")
     reviews = read_revlog(snap, after_id=last_review)
@@ -361,7 +381,8 @@ def ingest(wh, run_date: date, collection: str | Path, raw_dir: str | Path) -> d
 
     decks = len({n.deck for n in notes})
     logger.info("Ingested %d notes across %d decks, %d new reviews", len(notes), decks, len(reviews))
-    return {"notes": len(notes), "decks": decks, "new_reviews": len(reviews), "snapshot": str(snap)}
+    return {"notes": len(notes), "decks": decks, "new_reviews": len(reviews), "snapshot": str(snap),
+            "pruned_snapshots": pruned}
 
 
 def load_notes(wh, run_date: date) -> list[Note]:
