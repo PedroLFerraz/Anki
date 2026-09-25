@@ -26,7 +26,7 @@ weak_cards:
   max_ease: 2100
   max_per_deck: 1
 
-global_quota: 16
+global_quota: 19
 verify: true
 
 # Fetch an illustration when the model judges one genuinely helps.
@@ -177,3 +177,28 @@ decks:
       - EC2 instance sizing and the free tier
       - "VPC basics: subnets and security groups"
       - "keeping the bill at zero: budgets and free-tier limits"
+
+  # --- added with `ankigen add-theme` on 2026-09-24; edit freely
+  - deck: Data Platform::Spark
+    new_deck: true
+    daily_quota: 3
+    card_type: detailed
+    image_context: Apache Spark
+    topics:
+    - 'Spark architecture: driver, executors, cluster managers, and application lifecycle'
+    - Lazy evaluation, lineage graphs, and RDDs versus DataFrames
+    - 'Transformations versus actions: narrow versus wide dependencies and stage boundaries'
+    - 'Catalyst optimizer: logical plans, physical plans, and code generation'
+    - 'Tungsten execution engine: memory management, cache locality, and binary format'
+    - 'File I/O performance: predicate pushdown, projection pruning, and schema evolution'
+    - 'Partitioning strategies: repartition versus coalesce and partition sizing guidelines'
+    - 'Shuffle mechanics: shuffle write, shuffle read, and disk spilling'
+    - 'Join strategies: broadcast hash, sort-merge, and shuffle hash joins'
+    - 'Data skew mitigation: AQE skew join handling, salting, and broadcast thresholds'
+    - 'Spark memory model: execution memory, storage memory, and diagnosing OOM errors'
+    - 'Caching and persistence trade-offs: storage levels, memory pressure, and explicit unpersisting'
+    - Dynamic allocation and tuning spark-submit resource parameters
+    - 'Deployment modes: client versus cluster mode and containerized Spark on Kubernetes'
+    - 'Object store committers: avoiding the S3 rename penalty with S3A committers'
+    - 'Debugging with Spark UI: detecting data spill, long GC pauses, and straggler tasks'
+    instructions: Focus on execution mechanics, join algorithms, memory management, and debugging production failures. Avoid syntax-heavy API memorization or version-specific trivia.
