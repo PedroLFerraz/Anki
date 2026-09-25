@@ -62,7 +62,9 @@ ankigen run --deck "Data Platform::Kubernetes" --topic "probes" --prompt "Contra
 a sentence **about** it. The model plans an ordered list of topics in the same
 shape as your other decks and proposes it as a change to the profile: open the
 run's summary for the link and the topics. Merge it to start the subject, or
-close it. Locally: `ankigen add-theme --deck "..." --about "..."`.
+close it. When the profile is a curriculum (decks with `start:` dates), the new
+deck joins the end of it at the same pace, starting the day after the last one
+finishes. Leave **quota** blank for that. Locally: `ankigen add-theme --deck "..." --about "..."`.
 
 **Redo a day's pictures.** *daily cards* with **stages** set to
 `images,export,report` and that day's **run_date**. No new cards are written;

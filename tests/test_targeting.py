@@ -90,6 +90,75 @@ def test_new_deck_borrows_style_from_other_targeted_decks(profile, notes):
     assert "(nothing yet" in req.prompt
 
 
+# ------------------------------------------------------------------ curriculum
+
+TOPICS = ["t1", "t2", "t3", "t4", "t5"]
+
+
+def _phased(**deck):
+    return Profile.model_validate({
+        "global_quota": 10,
+        "decks": [{"deck": "DP::One", "new_deck": True, "daily_quota": 10,
+                   "start": "2026-10-01", "topics": TOPICS, **deck}],
+    })
+
+
+def _topics(profile, notes, day):
+    return [(r.topic, r.n) for r in build_requests(profile, notes, day)]
+
+
+def test_a_phased_deck_waits_for_its_start(notes):
+    assert _topics(_phased(), notes, date(2026, 9, 30)) == []
+
+
+def test_a_phased_deck_starts_at_its_first_topic_and_advances(notes):
+    p = _phased()
+    assert _topics(p, notes, date(2026, 10, 1)) == [("t1", 5), ("t2", 5)]
+    assert _topics(p, notes, date(2026, 10, 2)) == [("t3", 5), ("t4", 5)]
+
+
+def test_the_last_day_of_an_odd_list_writes_one_topic(notes):
+    assert _topics(_phased(), notes, date(2026, 10, 3)) == [("t5", 5)]
+
+
+def test_a_phased_deck_stops_after_one_pass(notes):
+    p = _phased()
+    assert p.decks[0].last_day == date(2026, 10, 3)
+    assert _topics(p, notes, date(2026, 10, 4)) == []
+
+
+def test_a_small_quota_takes_one_topic_a_day(notes):
+    p = _phased(daily_quota=3)
+    assert _topics(p, notes, date(2026, 10, 2)) == [("t2", 3)]
+    assert p.decks[0].last_day == date(2026, 10, 5)
+
+
+def test_decks_one_after_another_fit_the_daily_total():
+    p = Profile.model_validate({"global_quota": 10, "decks": [
+        {"deck": "A", "new_deck": True, "daily_quota": 10, "start": "2026-10-01", "topics": TOPICS},
+        {"deck": "B", "new_deck": True, "daily_quota": 10, "start": "2026-10-04", "topics": TOPICS},
+    ]})
+    assert p.validate_against(set()) == []
+    assert p.next_free_day() == date(2026, 10, 7)
+
+
+def test_overlapping_decks_past_the_daily_total_are_a_problem():
+    p = Profile.model_validate({"global_quota": 10, "decks": [
+        {"deck": "A", "new_deck": True, "daily_quota": 10, "start": "2026-10-01", "topics": TOPICS},
+        {"deck": "B", "new_deck": True, "daily_quota": 10, "start": "2026-10-03", "topics": TOPICS},
+    ]})
+    [problem] = p.validate_against(set())
+    assert "2026-10-03" in problem and "A and B" in problem
+
+
+def test_the_shipped_curriculum_runs_back_to_back():
+    p = load_profile("profiles/default.yaml")
+    phased = p.phased()
+    assert len(phased) == 13 and p.schedule_problems() == []
+    for a, b in zip(phased, phased[1:]):
+        assert b.start == a.last_day + timedelta(days=1), (a.deck, b.deck)
+
+
 def test_gap_request_when_no_topics(notes):
     p = Profile.model_validate({"decks": [{"deck": "DS::SQL", "daily_quota": 2}],
                                 "weak_cards": {"enabled": False}})

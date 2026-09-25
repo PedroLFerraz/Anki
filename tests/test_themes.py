@@ -119,6 +119,36 @@ def test_the_summary_lists_the_topics_and_the_quota_change(profile_file, planned
     assert "> Apache Spark for batch processing" in text
 
 
+PHASED = """global_quota: 10
+decks:
+  - deck: DP::One
+    new_deck: true
+    start: 2026-10-01
+    daily_quota: 10
+    topics: [t1, t2, t3, t4]
+"""
+
+
+def test_a_new_subject_joins_the_end_of_a_curriculum(tmp_path, planned):
+    path = tmp_path / "p.yaml"
+    path.write_text(PHASED, encoding="utf-8")
+    target = themes.plan(load_profile(path), "DP::Two")
+    assert target.daily_quota == 10                    # the curriculum's pace
+    proposal = themes.add_to_profile(path, target, today=date(2026, 9, 24))
+    added = load_profile(path).decks[-1]
+    assert added.start == date(2026, 10, 3)            # the day after DP::One ends
+    assert proposal.global_quota is None               # they never share a day
+    assert "from **2026-10-03**" in themes.summary(proposal)
+
+
+def test_a_curriculum_that_has_ended_restarts_tomorrow(tmp_path, planned):
+    path = tmp_path / "p.yaml"
+    path.write_text(PHASED, encoding="utf-8")
+    target = themes.plan(load_profile(path), "DP::Two")
+    themes.add_to_profile(path, target, today=date(2026, 12, 1))
+    assert load_profile(path).decks[-1].start == date(2026, 12, 2)
+
+
 def test_the_real_profile_can_take_a_new_deck(tmp_path, planned):
     """The shipped profile must stay appendable: decks last, valid after.
 

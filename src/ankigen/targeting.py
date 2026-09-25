@@ -18,13 +18,12 @@ from importlib import resources
 from string import Template
 
 from ankigen.ingest import Note
-from ankigen.profile import DeckTarget, Profile
+from ankigen.profile import CARDS_PER_TOPIC, DeckTarget, Profile
 
 # v2.0 filed cards under a separate top-level inbox. They now go straight into
 # the deck (or a subdeck of it), but decks exported by the old layout must still
 # count as "already studied" for dedup.
 LEGACY_INBOX = "AnkiGen Inbox"
-CARDS_PER_TOPIC = 5
 AVOID_LIMIT = 40
 
 _STOPWORDS = frozenset(
@@ -233,6 +232,11 @@ def build_requests(profile: Profile, notes: list[Note], run_date: date) -> list[
         quota = min(target.daily_quota, budget)
         if quota <= 0:
             continue
+        # A phased deck outside its window is not studied at all that day,
+        # weak cards included: its turn is either still coming or over.
+        todays = target.topics_on(run_date) if target.start else None
+        if todays == []:
+            continue
         rng = _rng(run_date, target.deck)
         deck_notes = [n for n in notes if in_deck(n.deck, target.deck)]
         # A brand-new subject has no cards of its own to imitate; borrow the
@@ -277,9 +281,15 @@ def build_requests(profile: Profile, notes: list[Note], run_date: date) -> list[
         # 2. Topics, rotated by date; a few cards each so a topic gets depth.
         if quota > 0 and target.topics:
             n_topics = min(len(target.topics), math.ceil(quota / CARDS_PER_TOPIC))
-            start = run_date.toordinal() % len(target.topics)
-            chosen = [target.topics[(start + i) % len(target.topics)] for i in range(n_topics)]
-            share, extra = divmod(quota, n_topics)
+            if todays is not None:
+                # In order from the first topic, each covered once. The last
+                # day of an odd-length list has one topic, and gets its share.
+                chosen = todays[:n_topics]
+                quota = min(quota, len(chosen) * CARDS_PER_TOPIC)
+            else:
+                start = run_date.toordinal() % len(target.topics)
+                chosen = [target.topics[(start + i) % len(target.topics)] for i in range(n_topics)]
+            share, extra = divmod(quota, len(chosen))
             for i, topic in enumerate(chosen):
                 if share + (i < extra):
                     add("topic", share + (i < extra), topic=topic)

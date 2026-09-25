@@ -1,6 +1,8 @@
 """The prompt profile: who the learner is and what each run should produce."""
 from __future__ import annotations
 
+import math
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -8,6 +10,8 @@ import yaml
 from pydantic import BaseModel, Field, field_validator
 
 CardType = Literal["basic", "cloze", "detailed"]
+# A topic gets a few cards, so it is covered in some depth rather than once.
+CARDS_PER_TOPIC = 5
 
 
 class Learner(BaseModel):
@@ -47,11 +51,34 @@ class DeckTarget(BaseModel):
     instructions: str = ""
     # A subject the collection doesn't have yet — nothing to learn style from.
     new_deck: bool = False
+    # A curriculum deck: nothing before this date, then its topics once, in
+    # order from the first, then nothing. Without it, topics rotate forever.
+    start: date | None = None
 
     @field_validator("deck")
     @classmethod
     def _normalise(cls, v: str) -> str:
         return "::".join(part.strip() for part in v.split("::"))
+
+    @property
+    def topics_per_day(self) -> int:
+        return max(1, math.ceil(self.daily_quota / CARDS_PER_TOPIC))
+
+    @property
+    def last_day(self) -> date | None:
+        """The day a phased deck writes its last topic."""
+        if self.start is None or not self.topics or self.daily_quota <= 0:
+            return None
+        days = math.ceil(len(self.topics) / self.topics_per_day)
+        return self.start + timedelta(days=days - 1)
+
+    def topics_on(self, run_date: date) -> list[str]:
+        """A phased deck's topics for one day; empty outside its window."""
+        day = (run_date - self.start).days if self.start else -1
+        if day < 0:
+            return []
+        first = day * self.topics_per_day
+        return self.topics[first:first + self.topics_per_day]
 
 
 class Profile(BaseModel):
@@ -106,7 +133,41 @@ class Profile(BaseModel):
                     f"New deck {target.deck!r} needs `topics:` — there are no existing "
                     "cards to infer a subject from."
                 )
+        return problems + self.schedule_problems()
+
+    def phased(self) -> list[DeckTarget]:
+        """Decks with a start date, in the order they begin."""
+        return sorted((t for t in self.decks if t.last_day), key=lambda t: t.start)
+
+    def schedule_problems(self) -> list[str]:
+        """Days when the running decks want more cards than the daily total.
+
+        The planner walks the decks in profile order and stops when the budget
+        is spent, so a deck past the total gets nothing, and says nothing.
+        """
+        phased = self.phased()
+        if not phased:
+            return []
+        always = sum(t.daily_quota for t in self.decks if t.start is None)
+        problems, seen = [], set()
+        day, end = phased[0].start, max(t.last_day for t in phased)
+        while day <= end:
+            running = [t for t in phased if t.start <= day <= t.last_day]
+            names = tuple(t.deck for t in running)
+            if always + sum(t.daily_quota for t in running) > self.global_quota and names not in seen:
+                seen.add(names)
+                problems.append(
+                    f"From {day}, {' and '.join(names)} run together and want more than "
+                    f"global_quota ({self.global_quota}) cards a day. Move a `start:` or "
+                    "lower a `daily_quota`."
+                )
+            day += timedelta(days=1)
         return problems
+
+    def next_free_day(self) -> date | None:
+        """The day after the last phased deck finishes, if any are phased."""
+        phased = self.phased()
+        return max(t.last_day for t in phased) + timedelta(days=1) if phased else None
 
 
 def load_profile(path: str | Path) -> Profile:
