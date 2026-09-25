@@ -99,6 +99,8 @@ def _provider_independent_of_your_env(monkeypatch):
     monkeypatch.setattr(settings, "llm_provider", "openrouter", raising=False)
     monkeypatch.setattr(settings, "llm_api_key", "test-key-not-real", raising=False)
     monkeypatch.setattr(settings, "google_api_key", "", raising=False)
+    monkeypatch.setattr(settings, "fallback_provider", "", raising=False)
+    monkeypatch.setattr("ankigen.llm._down", {})
 
 
 @pytest.fixture
