@@ -48,29 +48,6 @@ inbox: ""
 # - without it, topics rotate by date and wrap around, for as long as the
 #   deck has a quota above 0.
 decks:
-  # --- paused: the curriculum gets the whole budget for now.
-  # Set a quota above 0 to bring either of these back.
-  - deck: DS::SQL
-    daily_quota: 0
-    card_type: basic
-    images: false          # SQL semantics rarely benefit from a picture
-    topics:
-      - window functions and frame clauses
-      - NULL semantics in joins, aggregates and comparisons
-      - query performance, indexes and execution plans
-      - CTEs versus subqueries versus temp tables
-    instructions: >
-      Use small concrete SQL snippets in backticks where they make the concept
-      clearer. Assume a PostgreSQL-flavoured dialect unless the concept is portable.
-
-  - deck: DS::Statistics
-    daily_quota: 0
-    card_type: basic
-    topics:
-      - hypothesis testing pitfalls and p-value interpretation
-      - bias-variance and regularisation
-      - A/B test design and power
-
   # === The Data Platform curriculum: fundamentals first, AWS data infrastructure last.
   # Numbered so Anki lists the decks in the order they are studied.
 
