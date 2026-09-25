@@ -27,7 +27,7 @@ weak_cards:
   max_ease: 2100
   max_per_deck: 1
 
-global_quota: 10
+global_quota: 15
 verify: true
 
 # Fetch an illustration when the model judges one genuinely helps.
@@ -53,8 +53,8 @@ decks:
 
   - deck: Data Platform::01 Linux & Networking
     new_deck: true
-    start: 2026-09-28
-    daily_quota: 10
+    start: 2026-09-25
+    daily_quota: 15
     card_type: detailed
     image_context: "Linux networking"
     topics:
@@ -80,8 +80,8 @@ decks:
 
   - deck: Data Platform::02 Data Fundamentals
     new_deck: true
-    start: 2026-10-06
-    daily_quota: 10
+    start: 2026-10-01
+    daily_quota: 15
     card_type: detailed
     image_context: "data engineering"
     topics:
@@ -109,8 +109,8 @@ decks:
 
   - deck: Data Platform::03 Modelling & SQL
     new_deck: true
-    start: 2026-10-15
-    daily_quota: 10
+    start: 2026-10-07
+    daily_quota: 15
     card_type: detailed
     image_context: "data modeling"
     topics:
@@ -136,8 +136,8 @@ decks:
 
   - deck: Data Platform::04 Docker
     new_deck: true
-    start: 2026-10-23
-    daily_quota: 10
+    start: 2026-10-13
+    daily_quota: 15
     card_type: detailed
     image_context: "Docker"
     topics:
@@ -156,8 +156,8 @@ decks:
 
   - deck: Data Platform::05 AWS Core
     new_deck: true
-    start: 2026-10-29
-    daily_quota: 10
+    start: 2026-10-17
+    daily_quota: 15
     card_type: detailed
     image_context: "AWS"
     topics:
@@ -185,8 +185,8 @@ decks:
 
   - deck: Data Platform::06 Terraform
     new_deck: true
-    start: 2026-11-07
-    daily_quota: 10
+    start: 2026-10-23
+    daily_quota: 15
     card_type: detailed
     image_context: "Terraform"
     topics:
@@ -209,8 +209,8 @@ decks:
 
   - deck: Data Platform::07 AWS Data Lake
     new_deck: true
-    start: 2026-11-15
-    daily_quota: 10
+    start: 2026-10-29
+    daily_quota: 15
     card_type: detailed
     image_context: "AWS data lake"
     topics:
@@ -233,8 +233,8 @@ decks:
 
   - deck: Data Platform::08 Spark on AWS
     new_deck: true
-    start: 2026-11-23
-    daily_quota: 10
+    start: 2026-11-04
+    daily_quota: 15
     card_type: detailed
     image_context: "Apache Spark"
     topics:
@@ -260,8 +260,8 @@ decks:
 
   - deck: Data Platform::09 Orchestration
     new_deck: true
-    start: 2026-12-01
-    daily_quota: 10
+    start: 2026-11-10
+    daily_quota: 15
     card_type: detailed
     image_context: "Apache Airflow"
     topics:
@@ -285,8 +285,8 @@ decks:
 
   - deck: Data Platform::10 Streaming
     new_deck: true
-    start: 2026-12-10
-    daily_quota: 10
+    start: 2026-11-16
+    daily_quota: 15
     card_type: detailed
     image_context: "data streaming"
     topics:
@@ -310,8 +310,8 @@ decks:
 
   - deck: Data Platform::11 Warehouse
     new_deck: true
-    start: 2026-12-17
-    daily_quota: 10
+    start: 2026-11-21
+    daily_quota: 15
     card_type: detailed
     image_context: "Amazon Redshift"
     topics:
@@ -332,8 +332,8 @@ decks:
 
   - deck: Data Platform::12 Kubernetes & EKS
     new_deck: true
-    start: 2026-12-24
-    daily_quota: 10
+    start: 2026-11-26
+    daily_quota: 15
     card_type: detailed
     image_context: "Kubernetes"
     topics:
@@ -354,8 +354,8 @@ decks:
 
   - deck: Data Platform::13 Platform Operations
     new_deck: true
-    start: 2026-12-31
-    daily_quota: 10
+    start: 2026-12-01
+    daily_quota: 15
     card_type: detailed
     image_context: "data platform"
     topics:
