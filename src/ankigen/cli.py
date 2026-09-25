@@ -180,6 +180,13 @@ def validate(run_date: Optional[str] = DateOpt, profile: Optional[str] = Profile
     finally:
         ctx.wh.close()
     problems = ctx.profile.validate_against(existing)
+    phased = ctx.profile.phased()
+    if phased:
+        typer.echo("Curriculum:")
+        for t in phased:
+            now = " <- today" if t.start <= d <= t.last_day else ""
+            typer.echo(f"  {t.start} .. {t.last_day}  {len(t.topics):>2} topics  "
+                       f"{t.daily_quota:>2}/day  {t.deck}{now}")
     if problems:
         for p in problems:
             typer.echo(f"  x {p}")
@@ -378,7 +385,9 @@ def reset(
 def add_theme(
     deck: str = typer.Option(..., "--deck", help='The new deck, e.g. "Data Platform::Spark".'),
     about: str = typer.Option("", "--about", help="What it should cover, in a sentence."),
-    quota: int = typer.Option(3, "--quota", min=1, max=20, help="Cards a day."),
+    quota: Optional[int] = typer.Option(
+        None, "--quota", min=1, max=20,
+        help="Cards a day. Blank: the curriculum's pace, or 3 without one."),
     topics: int = typer.Option(16, "--topics", help="How many topics to plan."),
     card_type: Optional[str] = typer.Option(
         None, "--card-type", help="basic, cloze or detailed. Blank lets the model choose."
@@ -392,8 +401,9 @@ def add_theme(
     """Start a new subject: the model plans its topics, and it joins the profile.
 
     One request to the model. The deck is appended to the profile as text, so
-    the file's comments survive; review the topics (they run one per day, in
-    order) and edit them freely afterwards.
+    the file's comments survive; review the topics and edit them freely
+    afterwards. In a profile with a curriculum (decks with `start:`), the new
+    deck starts the day after the last one ends.
     """
     from ankigen import themes
     from ankigen.profile import load_profile

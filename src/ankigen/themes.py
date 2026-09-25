@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from importlib import resources
 from pathlib import Path
 from string import Template
@@ -24,6 +24,7 @@ from ankigen.profile import DeckTarget, Profile
 MIN_TOPICS = 6
 MAX_TOPICS = 24
 CARD_TYPES = ("basic", "cloze", "detailed")
+DEFAULT_QUOTA = 3
 
 
 @dataclass
@@ -33,9 +34,15 @@ class Proposal:
     global_quota: int | None = None  # the new global quota, when it had to go up
 
 
-def plan(profile: Profile, deck: str, about: str = "", topics: int = 16, quota: int = 3,
+def plan(profile: Profile, deck: str, about: str = "", topics: int = 16, quota: int | None = None,
          card_type: str | None = None) -> DeckTarget:
-    """Ask the model for the new deck's curriculum. One request."""
+    """Ask the model for the new deck's curriculum. One request.
+
+    Without a quota, a deck joining a curriculum keeps the curriculum's pace.
+    """
+    if quota is None:
+        phased = profile.phased()
+        quota = phased[-1].daily_quota if phased else DEFAULT_QUOTA
     deck = "::".join(part.strip() for part in deck.split("::"))
     if any(t.deck == deck for t in profile.decks):
         raise ValueError(f"{deck!r} is already in the profile.")
@@ -87,6 +94,8 @@ def render(target: DeckTarget, today: date) -> str:
              "card_type": target.card_type}
     if target.image_context:
         entry["image_context"] = target.image_context
+    if target.start:
+        entry["start"] = target.start
     entry["topics"] = list(target.topics)
     if target.instructions:
         entry["instructions"] = target.instructions
@@ -109,11 +118,18 @@ def add_to_profile(path: Path, target: DeckTarget, today: date | None = None) ->
         raise ValueError("`decks:` is not the last section of the profile, so the new "
                          "deck cannot be appended safely. Move `decks:` to the end.")
 
-    block = render(target, today or date.today())
+    today = today or date.today()
+    free = profile.next_free_day()
+    if free and target.start is None:
+        # A curriculum runs one subject after another; this one joins the end.
+        target = target.model_copy(update={"start": max(free, today + timedelta(days=1))})
+    block = render(target, today)
     new_text = text.rstrip("\r\n") + "\n\n" + block
     # A deck beyond the daily total gets nothing: the planner stops once the
-    # budget is spent, and a new deck is last in line.
-    needed = sum(t.daily_quota for t in profile.decks) + target.daily_quota
+    # budget is spent, and a new deck is last in line. A phased deck only
+    # shares the day with the decks that never stop.
+    needed = sum(t.daily_quota for t in profile.decks
+                 if target.start is None or t.start is None) + target.daily_quota
     raised = None
     if needed > profile.global_quota:
         raised = needed
@@ -131,8 +147,13 @@ def add_to_profile(path: Path, target: DeckTarget, today: date | None = None) ->
 def summary(proposal: Proposal, about: str = "") -> str:
     """Markdown describing the change, for the pull request."""
     t = proposal.target
-    lines = [f"Adds **{t.deck}** to the daily rotation: {t.daily_quota} {t.card_type} "
-             f"card(s) a day, one topic per day, in this order.", ""]
+    if t.start:
+        lines = [f"Adds **{t.deck}** to the curriculum: {t.daily_quota} {t.card_type} "
+                 f"card(s) a day from **{t.start}** to **{t.last_day}**, "
+                 f"{t.topics_per_day} topic(s) a day, in this order.", ""]
+    else:
+        lines = [f"Adds **{t.deck}** to the daily rotation: {t.daily_quota} {t.card_type} "
+                 f"card(s) a day, one topic per day, in this order.", ""]
     if about:
         lines += [f"> {about}", ""]
     lines += [f"{i}. {topic}" for i, topic in enumerate(t.topics, start=1)]

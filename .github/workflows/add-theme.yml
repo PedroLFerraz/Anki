@@ -19,10 +19,10 @@ on:
         required: false
         type: string
       quota:
-        description: "Cards a day"
+        description: "Cards a day (blank: the curriculum's pace)"
         required: false
         type: string
-        default: "3"
+        default: ""
 
 permissions:
   contents: write         # to push the proposal's branch
@@ -55,7 +55,7 @@ jobs:
           QUOTA: ${{ inputs.quota }}
         run: |
           python -m ankigen add-theme --deck "$DECK" --about "$ABOUT" \
-            --quota "${QUOTA:-3}" --summary proposal.md
+            ${QUOTA:+--quota "$QUOTA"} --summary proposal.md
 
       - name: Propose it
         env:

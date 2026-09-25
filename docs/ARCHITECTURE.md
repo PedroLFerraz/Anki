@@ -133,7 +133,11 @@ For each deck in the profile, up to its `daily_quota`:
    below 2100. It shuffles the 12 weakest and asks for the fact to be taught
    from a *different angle*, not reworded.
 2. **Topics next.** It rotates through the profile's topics by date, about 5
-   cards per topic.
+   cards per topic. A deck with a `start:` date is a curriculum step instead:
+   nothing before that day, then its topics once, in order from the first,
+   `daily_quota / 5` a day, then nothing, weak cards included. Decks with
+   start dates run one after another; `ankigen validate` prints the timeline
+   and fails if two running at once want more than `global_quota`.
 3. **No topics?** It asks the model to find what the deck is missing.
 
 Each prompt is built from the `prompts/generate.txt` template and contains:
