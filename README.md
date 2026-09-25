@@ -11,7 +11,7 @@ ready to schedule with Airflow, containerise, and move to S3 and Kubernetes. See
 the [roadmap](#roadmap).
 
 <p align="center">
-  <img src="docs/pipeline.svg" alt="Eight idempotent stages — ingest, target, generate, verify, dedup, images, export, report — over a DuckDB warehouse partitioned by run_date" width="100%">
+  <img src="docs/pipeline.svg" alt="Idempotent stages — ingest, target, generate, verify, dedup, refill, images, export, report — over a DuckDB warehouse partitioned by run_date" width="100%">
 </p>
 
 ## Quick start
@@ -45,7 +45,8 @@ get a lock.
 | **ingest** | your `collection.anki2` | `raw_notes` (daily snapshot), `raw_revlog` (incremental) | Snapshots through SQLite's backup API, so reviews still in the `-wal` file are included. A plain file copy misses them, and there's a test proving it. Handles both schema generations and any note type, from `Front/Back` to `Frente/Verso`. |
 | **target** | `raw_notes`, profile | `requests` (with the rendered prompt) | Deterministic. The same date always produces the same plan, and topics and weak cards rotate day to day; a deck with a `start:` date covers its topics once, in order. No LLM calls, so `plan` is instant. |
 | **generate** | `requests` | `generated_cards` | The only non-deterministic stage. If one request fails, the rest of the run still goes ahead. |
-| **verify** | `generated_cards` | `verified_cards` | A second LLM pass fact-checks each card, ideally on a *different* model (`VERIFY_MODEL`) — a model marking its own homework shares its blind spots. On real runs it catches roughly a third of what the generator writes. If the checker is down, cards pass through tagged `ankigen::unverified` rather than being dropped. |
+| **verify** | `generated_cards` | `verified_cards` | A second LLM pass fact-checks each card, ideally on a *different* model (`VERIFY_MODEL`) — a model marking its own homework shares its blind spots. On real runs it catches roughly a third of what the generator writes. If the checker is down, cards pass through tagged `ankigen::unverified` rather than being dropped. A card whose only fault is its drawn table or diagram keeps its place and loses the picture. |
+| **refill** | requests left short by verify and dedup | more `generated_cards` (flagged `refill`), with their `verified_cards` and `dedup_results` | One more request per short batch, for exactly the cards it lost, showing the model each rejected card and why. The new cards go through the same check and dedup; one round only, so a stubborn topic cannot spend the day's free-tier requests. |
 | **dedup** | the above + `raw_notes` + previous runs | `dedup_results` | Compared against your **whole collection**, not just the target deck — a fact you already have in `DS::SQL` is not new because a run asked for it under Data Platform. Embedding similarity catches rephrasings; fuzzy matching runs over the nearest twenty by meaning. Cards just below the duplicate threshold are kept and tagged `ankigen::near-dup` rather than dropped unseen. |
 | **images** | kept cards wanting one | `card_visuals`, `card_images` | Only for cards whose answer is easier to hold as a picture. Mostly **drawn from the card itself**: the model that writes a card can describe a comparison as a table or a flow as a Graphviz diagram in the same request, so the picture shows exactly what the card says, and the fact-checker checks it along with the card. Cards that need a real picture — a screenshot, a photograph — are searched for on the web, then **shown to the model with the card** and kept only if it actually illustrates it: search engines match the words around a picture, never the picture, so a card about S3's flat namespace once arrived with a stock photo of a basketball player. Everything travels inside the note (inline SVG, HTML tables, small inline JPEGs), so no media sync is needed. |
 | **export** | `card_outcomes` view | `.apkg`, Parquet | Stable note GUIDs and stable deck and note-type IDs. |
@@ -149,8 +150,8 @@ down from AnkiWeb, writes the cards, and syncs them back, so they appear on your
 phone and desktop with nothing to import. Free on a public repo, two secrets to
 set up — see [docs/GITHUB_ACTIONS.md](docs/GITHUB_ACTIONS.md).
 
-There is also an [Airflow stack](infra/airflow/) that runs the same eight stages
-as eight tasks, which is the orchestration you would use at work; it needs
+There is also an [Airflow stack](infra/airflow/) that runs the same stages
+as one task each, which is the orchestration you would use at work; it needs
 something to be on, so Actions is what actually fires daily.
 
 ## Roadmap

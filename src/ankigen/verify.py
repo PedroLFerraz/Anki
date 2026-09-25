@@ -50,14 +50,19 @@ def visual_verdicts(results: list, cards: list[dict]) -> list[bool | None]:
 
 
 def judge(results: list, cards: list[dict]) -> list[tuple[bool, float | None, str]]:
-    """Map the checker's verdicts back onto cards by index."""
+    """Map the checker's verdicts back onto cards by index.
+
+    A card is judged on its question and answer. Told that, the checker still
+    failed two good cards over a scrambled table and nothing else, so a card
+    whose only complaint is its visual passes, and loses the visual instead.
+    """
     by_index = {}
     for r in results if isinstance(results, list) else []:
         if isinstance(r, dict) and isinstance(r.get("index"), int):
             by_index[r["index"]] = r
 
     verdicts = []
-    for i, _ in enumerate(cards, start=1):
+    for i, card in enumerate(cards, start=1):
         r = by_index.get(i)
         if r is None:
             verdicts.append((True, None, f"{UNVERIFIED}: checker skipped this card"))
@@ -69,9 +74,15 @@ def judge(results: list, cards: list[dict]) -> list[tuple[bool, float | None, st
         except (TypeError, ValueError):
             score = 0.0
         issue = str(r.get("issue") or "").strip()
+        visual_issue = str(r.get("visual_issue") or "").strip()
+        picture_only = (card.get("visual_json") and r.get("visual_ok") is False
+                        and not issue and answerable)
+        if picture_only:
+            correct, score = True, max(score, PASS_SCORE)
         passed = correct and answerable and score >= PASS_SCORE
         if passed:
-            reason = ""
+            dropped_visual = r.get("visual_ok") is False and card.get("visual_json")
+            reason = f"visual dropped: {visual_issue}".rstrip(": ") if dropped_visual else ""
         elif not correct:
             reason = f"incorrect: {issue or 'factual error'}"
         elif not answerable:
@@ -82,12 +93,20 @@ def judge(results: list, cards: list[dict]) -> list[tuple[bool, float | None, st
     return verdicts
 
 
+VERIFIED_COLUMNS = ("run_date", "card_uid", "passed", "score", "reason", "visual_ok")
+CARD_QUERY = ("SELECT card_uid, request_id, deck, front, back, visual_json FROM generated_cards "
+              "WHERE run_date = ? {extra} ORDER BY request_id, card_uid")
+
+
 def run(wh, run_date: date, profile: Profile) -> dict:
-    cards = wh.query(
-        "SELECT card_uid, request_id, deck, front, back, visual_json FROM generated_cards "
-        "WHERE run_date = ? ORDER BY request_id, card_uid",
-        [run_date],
-    )
+    cards = wh.query(CARD_QUERY.format(extra=""), [run_date])
+    rows, checker_errors = check(run_date, cards, profile)
+    wh.replace_partition("verified_cards", run_date, VERIFIED_COLUMNS, rows)
+    return summarize(rows, checker_errors)
+
+
+def check(run_date: date, cards: list[dict], profile: Profile) -> tuple[list[tuple], int]:
+    """VERIFIED_COLUMNS rows for these cards, one checker call per request."""
     rows = []
     checker_errors = 0
     checker = settings.resolve_verify()
@@ -132,10 +151,10 @@ def run(wh, run_date: date, profile: Profile) -> dict:
                 for c, (passed, score, reason), picture in zip(batch, verdicts, pictures)
             )
 
-    wh.replace_partition(
-        "verified_cards", run_date,
-        ("run_date", "card_uid", "passed", "score", "reason", "visual_ok"), rows,
-    )
+    return rows, checker_errors
+
+
+def summarize(rows: list[tuple], checker_errors: int) -> dict:
     dropped = [r for r in rows if not r[2]]
     return {
         "checked": len(rows),
