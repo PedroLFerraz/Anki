@@ -140,6 +140,20 @@ def card_uid(run_date: date, request_id: str, front: str) -> str:
     return hashlib.sha1(f"{run_date}|{request_id}|{front.lower()}".encode()).hexdigest()[:16]
 
 
+def card_rows(run_date: date, req: dict, cards: list[Card], result: llm.LLMResult | None,
+              p_tok: int, c_tok: int) -> list[tuple]:
+    """One request's cards as WRITTEN_COLUMNS rows. Tokens are attributed to
+    the first card so per-request totals stay summable."""
+    return [(
+        run_date, card_uid(run_date, req["request_id"], card.front), req["request_id"],
+        req["deck"], req["card_type"], card.front, card.back,
+        json.dumps(card.fields, ensure_ascii=False), card.image_query,
+        result.model if result else None,
+        p_tok if i == 0 else 0, c_tok if i == 0 else 0,
+        json.dumps(card.visual, ensure_ascii=False) if card.visual else None,
+    ) for i, card in enumerate(cards)]
+
+
 def run(wh, run_date: date, requests: list[dict]) -> dict:
     rows, failures = [], []
     total_prompt = total_completion = 0
@@ -163,16 +177,7 @@ def run(wh, run_date: date, requests: list[dict]) -> dict:
             continue
         total_prompt += p_tok
         total_completion += c_tok
-        # Tokens are attributed to the first card so per-request totals stay summable.
-        for i, card in enumerate(cards):
-            rows.append((
-                run_date, card_uid(run_date, req["request_id"], card.front), req["request_id"],
-                req["deck"], req["card_type"], card.front, card.back,
-                json.dumps(card.fields, ensure_ascii=False), card.image_query,
-                result.model if result else None,
-                p_tok if i == 0 else 0, c_tok if i == 0 else 0,
-                json.dumps(card.visual, ensure_ascii=False) if card.visual else None,
-            ))
+        rows.extend(card_rows(run_date, req, cards, result, p_tok, c_tok))
     # Two requests can land on the same card; keep the first.
     seen, unique = set(), []
     for r in rows:

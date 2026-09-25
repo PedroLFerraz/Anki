@@ -76,7 +76,9 @@ CREATE TABLE IF NOT EXISTS generated_cards (
     model       VARCHAR,
     prompt_tokens     INTEGER,
     completion_tokens INTEGER,
-    visual_json VARCHAR
+    visual_json VARCHAR,
+    -- Written by the refill stage, to replace cards the checks dropped.
+    refill      BOOLEAN
 );
 
 CREATE TABLE IF NOT EXISTS verified_cards (
@@ -137,7 +139,7 @@ CREATE OR REPLACE VIEW card_outcomes AS
 SELECT
     g.run_date, g.card_uid, g.request_id, g.deck, g.card_type, g.front, g.back,
     g.fields_json, r.reason AS request_reason, r.topic,
-    g.image_query, g.visual_json,
+    g.image_query, g.visual_json, COALESCE(g.refill, FALSE) AS refill,
     v.passed AS verify_passed, v.score AS verify_score, v.reason AS verify_reason,
     v.visual_ok,
     cv.kind AS visual_kind, cv.html AS visual_html,
@@ -176,6 +178,9 @@ class Warehouse:
         )
         self.con.execute(
             "ALTER TABLE IF EXISTS verified_cards ADD COLUMN IF NOT EXISTS visual_ok BOOLEAN"
+        )
+        self.con.execute(
+            "ALTER TABLE IF EXISTS generated_cards ADD COLUMN IF NOT EXISTS refill BOOLEAN"
         )
         self.con.execute(SCHEMA)
 
