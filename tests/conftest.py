@@ -162,13 +162,15 @@ class FakeLLM:
     """Answers generate prompts with deterministic cards, verify prompts with verdicts.
 
     `bad_words` marks any card containing them as factually incorrect, so tests
-    can steer verification outcomes.
+    can steer verification outcomes. `distinct` words each card apart from the
+    others, so dedup drops nothing unless a test arranges it.
     """
 
-    def __init__(self, bad_words=(), fail_verify=False):
+    def __init__(self, bad_words=(), fail_verify=False, distinct=False):
         self.calls: list[str] = []
         self.bad_words = bad_words
         self.fail_verify = fail_verify
+        self.distinct = distinct
 
     def __call__(self, prompt: str, max_retries: int = 5, cfg: dict | None = None) -> llm.LLMResult:
         self.calls.append(prompt)
@@ -190,6 +192,10 @@ class FakeLLM:
         if "{{c1::term}}" in prompt:
             cards = [{"text": f"In {deck}, the {{{{c1::fact{i}}}}} of {subject} ({tag}).", "extra": ""}
                      for i in range(n)]
+        elif self.distinct:
+            words = [hashlib.md5(f"{tag}{i}".encode()).hexdigest()[:24] for i in range(n)]
+            cards = [{"question": f"Question {i} {w}?", "answer": f"Answer {w}."}
+                     for i, w in enumerate(words)]
         else:
             cards = [{"question": f"Question {i} about {subject} in {deck} ({tag})?",
                       "answer": f"Answer {i} about {subject}."} for i in range(n)]
