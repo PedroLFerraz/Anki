@@ -1,5 +1,6 @@
 """End-to-end: the whole pipeline against a real (tiny) collection, fake LLM."""
 import json
+import re
 
 import pytest
 import yaml
@@ -66,6 +67,89 @@ def test_verify_drops_are_reported(ctx, cfg, fake_llm):
     report = json.loads((cfg.data_path / "out" / str(RUN_DATE) / "run_report.json").read_text())
     assert report["outcomes"].get("dropped_verify", 0) > 0
     assert all(d["reason"].startswith("incorrect") for d in report["dropped"] if d["outcome"] == "dropped_verify")
+
+
+UP_TO_DEDUP = ["ingest", "target", "generate", "verify", "dedup"]
+
+
+@pytest.fixture
+def distinct(fake_llm):
+    fake_llm.distinct = True
+    return fake_llm
+
+
+def _kept(wh):
+    return wh.scalar("SELECT COUNT(*) FROM card_outcomes WHERE run_date = ? AND outcome = 'kept'",
+                     [RUN_DATE])
+
+
+def test_dropped_cards_are_refilled(ctx, fake_llm, distinct):
+    fake_llm.bad_words = ("Question 0",)
+    results = pipeline.run(ctx, RUN_DATE, stages=UP_TO_DEDUP)
+    requested = results["target"]["cards_requested"]
+    assert _kept(ctx.wh) < requested
+
+    fake_llm.bad_words = ()                            # the second attempt gets it right
+    refill = pipeline.run(ctx, RUN_DATE, stages=["refill"])["refill"]
+    assert refill["short"] == refill["kept"] > 0
+    assert _kept(ctx.wh) == requested
+
+    prompt = next(p for p in fake_llm.calls if "A FIRST ATTEMPT" in p)
+    assert "These were rejected" in prompt and "rejected: incorrect: wrong fact" in prompt
+    assert "These cards were kept" in prompt
+
+
+def test_refill_asks_for_the_missing_count_only(ctx, fake_llm, distinct):
+    fake_llm.bad_words = ("Question 0",)
+    pipeline.run(ctx, RUN_DATE, stages=UP_TO_DEDUP)
+    calls = len(fake_llm.calls)
+    pipeline.run(ctx, RUN_DATE, stages=["refill"])
+    asks = [p for p in fake_llm.calls[calls:] if "A FIRST ATTEMPT" in p]
+    assert asks and all(re.search(r"Write exactly 1\b", p) for p in asks)
+
+
+def test_refill_is_one_round(ctx, fake_llm, distinct):
+    fake_llm.bad_words = ("Question 0",)               # wrong again the second time
+    pipeline.run(ctx, RUN_DATE, stages=UP_TO_DEDUP)
+    calls = len(fake_llm.calls)
+    refill = pipeline.run(ctx, RUN_DATE, stages=["refill"])["refill"]
+    assert refill["kept"] == 0 and refill["passed"] == 0
+    # One generate and one check per short request, and no more.
+    assert len(fake_llm.calls) - calls == 2 * refill["short_requests"]
+
+
+def test_rerunning_refill_replaces_its_own_cards(ctx, fake_llm, distinct):
+    fake_llm.bad_words = ("Question 0",)
+    pipeline.run(ctx, RUN_DATE, stages=UP_TO_DEDUP)
+    fake_llm.bad_words = ()
+    pipeline.run(ctx, RUN_DATE, stages=["refill"])
+    before = _state(ctx.wh)
+    pipeline.run(ctx, RUN_DATE, stages=["refill"])
+    assert _state(ctx.wh) == before
+
+
+def test_a_day_with_nothing_dropped_asks_for_nothing(ctx, fake_llm, distinct):
+    pipeline.run(ctx, RUN_DATE, stages=UP_TO_DEDUP)
+    calls = len(fake_llm.calls)
+    refill = pipeline.run(ctx, RUN_DATE, stages=["refill"])["refill"]
+    assert refill["short"] == 0 and len(fake_llm.calls) == calls
+
+
+def test_refill_needs_verify_and_dedup_first(ctx):
+    pipeline.run(ctx, RUN_DATE, stages=["ingest", "target", "generate"])
+    with pytest.raises(RuntimeError, match="verify and dedup"):
+        pipeline.run(ctx, RUN_DATE, stages=["refill"])
+
+
+def test_the_summary_says_what_the_refill_replaced(ctx, fake_llm, distinct):
+    from ankigen.export import markdown_summary
+    fake_llm.bad_words = ("Question 0",)
+    pipeline.run(ctx, RUN_DATE, stages=UP_TO_DEDUP)
+    fake_llm.bad_words = ()
+    refill = pipeline.run(ctx, RUN_DATE, stages=["refill"])["refill"]
+    text = markdown_summary(ctx.wh, RUN_DATE)
+    assert f"replaced by the refill" in text and "*(refill)*" in text
+    assert f", {refill['kept']} replaced" in text
 
 
 def test_failed_stage_is_recorded(ctx, monkeypatch):

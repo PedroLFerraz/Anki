@@ -1,4 +1,4 @@
-"""The daily pipeline: ingest -> target -> generate -> verify -> dedup -> images -> export -> report.
+"""The daily pipeline: ingest -> target -> generate -> verify -> dedup -> refill -> images -> export -> report.
 
 Each stage is a function of (context, run_date) that reads its inputs from the
 warehouse and replaces its own `run_date` partition. That contract is what lets
@@ -16,7 +16,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable
 
-from ankigen import dedup, export, generate, images, ingest, llm, targeting, verify, visuals
+from ankigen import dedup, export, generate, images, ingest, llm, refill, targeting, verify, visuals
 from ankigen.config import Settings, settings
 from ankigen.profile import Profile, load_profile
 from ankigen.warehouse import Warehouse
@@ -94,6 +94,10 @@ def stage_verify(ctx: Context, run_date: date) -> dict:
 
 def stage_dedup(ctx: Context, run_date: date) -> dict:
     return dedup.run(ctx.wh, run_date)
+
+
+def stage_refill(ctx: Context, run_date: date) -> dict:
+    return refill.run(ctx.wh, run_date, ctx.profile)
 
 
 def stage_images(ctx: Context, run_date: date) -> dict:
@@ -182,6 +186,7 @@ STAGES: dict[str, Callable[[Context, date], dict]] = {
     "generate": stage_generate,
     "verify": stage_verify,
     "dedup": stage_dedup,
+    "refill": stage_refill,
     "images": stage_images,
     "export": stage_export,
     "report": stage_report,
@@ -210,6 +215,6 @@ def run(ctx: Context, run_date: date, stages: list[str] | None = None, dry_run: 
         raise ValueError(f"Unknown stage(s): {unknown}. Choose from {list(STAGES)}.")
     # Before ingest, not after it: a provider that cannot work at all should
     # say so in a second rather than once per request, ninety seconds in.
-    if {"generate", "verify"} & set(names):
+    if {"generate", "verify", "refill"} & set(names):
         llm.preflight()
     return {name: run_stage(ctx, name, run_date) for name in names}

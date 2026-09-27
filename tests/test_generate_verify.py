@@ -227,6 +227,38 @@ def test_low_score_fails():
     assert not passed and "low quality" in reason
 
 
+def _with_table():
+    return [{"front": "chmod 750?", "back": "rwx, r-x, none.",
+             "visual_json": json.dumps({"table": [["digit", "rights"], ["7", "rwx"]]})}]
+
+
+def test_a_card_failed_only_over_its_visual_keeps_the_card():
+    [(passed, score, reason)] = verify.judge([
+        {"index": 1, "correct": False, "answerable": True, "score": 0.3, "issue": "",
+         "visual_ok": False, "visual_issue": "scrambled binary mappings"}], _with_table())
+    assert passed and score == verify.PASS_SCORE
+    assert reason == "visual dropped: scrambled binary mappings"
+
+
+def test_a_wrong_answer_still_fails_when_the_visual_is_wrong_too():
+    [(passed, _, reason)] = verify.judge([
+        {"index": 1, "correct": False, "answerable": True, "score": 0.3,
+         "issue": "750 gives the group write", "visual_ok": False}], _with_table())
+    assert not passed and reason == "incorrect: 750 gives the group write"
+
+
+def test_a_passing_card_notes_the_visual_it_lost():
+    [(passed, _, reason)] = verify.judge([
+        {"index": 1, "correct": True, "answerable": True, "score": 0.9,
+         "visual_ok": False, "visual_issue": "wrong row"}], _with_table())
+    assert passed and reason == "visual dropped: wrong row"
+
+
+def test_the_checker_is_asked_to_keep_the_visual_out_of_the_verdict():
+    prompt = verify.build_prompt("D", "beginner", _with_table())
+    assert "visual_issue" in prompt and "Never mention the visual here" in prompt
+
+
 def _seed_generated(wh):
     wh.replace_partition("generated_cards", RUN_DATE, generate.GENERATED_COLUMNS, [
         (RUN_DATE, "u1", "r1", "DS::SQL", "basic", "Is the earth flat?", "Yes.", "{}", "", "m", 0, 0),

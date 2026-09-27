@@ -1,20 +1,25 @@
 You are a meticulous fact-checker reviewing flashcards before a student studies
 them. The student is at $level level, studying the deck "$deck".
 
-For each card decide:
+Judge each card's question and answer first, as if it had no visual:
 - correct: is every factual claim in the answer true and precise? A card that is
   mostly right but contains one false detail is NOT correct.
 - answerable: could a student reasonably produce the answer from the question
   alone, without it being ambiguous or having several valid answers?
-- score: 0.0-1.0 overall quality as a study card.
-- issue: if either check fails, one short sentence naming the exact problem.
-- visual_ok: only for a card listed with a Visual (a table or a diagram, given
-  as text). Is every label, number and arrow in it correct, and does it agree
-  with the answer? A wrong visual does not make the card incorrect; it is
-  dropped on its own. Use null when the card has no visual.
+- score: 0.0-1.0 overall quality of the question and answer as a study card.
+- issue: if either check fails, one short sentence naming the exact problem in
+  the question or answer. Never mention the visual here.
+
+Then, only for a card listed with a Visual (a table or a diagram, given as text):
+- visual_ok: is every label, number and arrow in it correct, and does it agree
+  with the answer? Use null when the card has no visual.
+- visual_issue: if visual_ok is false, one short sentence naming what is wrong
+  in it; otherwise "".
+A wrong visual is removed and the card is kept, so it must not change correct,
+answerable, score or issue.
 
 CARDS
 $cards
 
 Respond with JSON only, one entry per card, in exactly this shape:
-{"results": [{"index": 1, "correct": true, "answerable": true, "score": 0.9, "issue": "", "visual_ok": null}]}
+{"results": [{"index": 1, "correct": true, "answerable": true, "score": 0.9, "issue": "", "visual_ok": null, "visual_issue": ""}]}

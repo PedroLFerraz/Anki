@@ -151,12 +151,17 @@ def _normalise(rows: list[np.ndarray]) -> np.ndarray:
     return m / norms
 
 
-def run(wh, run_date: date, use_embeddings: bool = True) -> dict:
+def run(wh, run_date: date, use_embeddings: bool = True, refill: bool = False) -> dict:
+    """Dedup the day's cards that passed verification.
+
+    With `refill`, only the refill stage's cards, checked against today's
+    kept cards as well, and written next to the day's other results.
+    """
     candidates = wh.query(
-        """SELECT g.card_uid, g.deck, g.front, g.back
+        f"""SELECT g.card_uid, g.deck, g.front, g.back
            FROM generated_cards g
            JOIN verified_cards v USING (run_date, card_uid)
-           WHERE g.run_date = ? AND v.passed
+           WHERE g.run_date = ? AND v.passed {"AND g.refill" if refill else ""}
            ORDER BY g.request_id, g.card_uid""",
         [run_date],
     )
@@ -171,6 +176,12 @@ def run(wh, run_date: date, use_embeddings: bool = True) -> dict:
     # have a card for in DS::SQL is not new knowledge because this run asked
     # for it under Data Platform — you would simply be shown it twice.
     everything = [dict(n) for n in notes]
+    if refill:
+        prior += wh.query(
+            "SELECT deck, front, back FROM card_outcomes "
+            "WHERE outcome = 'kept' AND run_date = ? AND NOT refill",
+            [run_date],
+        )
     everything += [{**p, "content_hash": content_hash(p["front"], p["back"])} for p in prior]
 
     # Fuzzy-only runs stay inside the deck: difflib against a whole collection
@@ -254,9 +265,17 @@ def run(wh, run_date: date, use_embeddings: bool = True) -> dict:
                     searchable.append(twin)
                     matrix = np.vstack([matrix, card_vec / (np.linalg.norm(card_vec) or 1.0)])
 
-    wh.replace_partition(
-        "dedup_results", run_date, ("run_date", "card_uid", "is_dup", "reason", "similarity"), rows
-    )
+    columns = ("run_date", "card_uid", "is_dup", "reason", "similarity")
+    if refill:
+        with wh.transaction() as con:
+            con.execute(
+                "DELETE FROM dedup_results WHERE run_date = ? AND card_uid IN "
+                "(SELECT card_uid FROM generated_cards WHERE run_date = ? AND refill)",
+                [run_date, run_date],
+            )
+            wh.insert("dedup_results", columns, rows, con=con)
+    else:
+        wh.replace_partition("dedup_results", run_date, columns, rows)
     dups = sum(1 for r in rows if r[2])
     return {
         "checked": len(rows),

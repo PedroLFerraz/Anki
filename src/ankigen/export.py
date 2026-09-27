@@ -205,7 +205,7 @@ def markdown_summary(wh, run_date: date) -> str:
     the counts first and the cards folded away underneath."""
     cards = wh.query(
         """SELECT deck, front, outcome, verify_reason, dup_reason, visual_kind,
-                  image_filename, model
+                  image_filename, model, refill
            FROM card_outcomes c
            LEFT JOIN (SELECT card_uid, model FROM generated_cards WHERE run_date = ?) g
                 USING (card_uid)
@@ -228,14 +228,18 @@ def markdown_summary(wh, run_date: date) -> str:
 
     lines += ["", "<details><summary>The cards</summary>", ""]
     for c in kept:
-        picture = c["visual_kind"] or ("picture" if c["image_filename"] else "")
+        notes = [c["visual_kind"] or ("picture" if c["image_filename"] else ""),
+                 "refill" if c["refill"] else ""]
+        note = ", ".join(n for n in notes if n)
         lines.append(f"- **{c['deck'].split('::')[-1]}** · {_one_line(c['front'])}"
-                     + (f" *({picture})*" if picture else ""))
+                     + (f" *({note})*" if note else ""))
     lines += ["", "</details>", ""]
 
     dropped = [c for c in cards if c["outcome"].startswith("dropped_")]
     if dropped:
-        lines += [f"**Dropped {len(dropped)}:**", ""]
+        refilled = sum(1 for c in kept if c["refill"])
+        replaced = f", {refilled} replaced by the refill" if refilled else ""
+        lines += [f"**Dropped {len(dropped)}{replaced}:**", ""]
         for c in dropped:
             why = c["verify_reason"] if c["outcome"] == "dropped_verify" else c["dup_reason"]
             lines.append(f"- {_one_line(c['front'])} — *{_one_line(why or '')}*")
