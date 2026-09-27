@@ -117,6 +117,13 @@ jobs:
       # gets all the way to the first request before failing.
       - run: pip install ".[gemini,push]"
 
+      # Claude writes and checks the cards, on the Claude subscription behind
+      # CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`). If this install fails,
+      # or the token is missing or out of usage, the run carries on on Gemini.
+      - name: Install Claude Code
+        continue-on-error: true
+        run: npm install -g @anthropic-ai/claude-code
+
       # The warehouse holds every past run: what was generated, what was kept,
       # and the embedding cache. Losing it is survivable — the next run rebuilds
       # from the collection — but it would forget which cards it already made.
@@ -149,17 +156,26 @@ jobs:
           ANKIGEN_PROFILE: profiles/default.yaml
           DATA_DIR: data
           EMBEDDING_PROVIDER: fastembed
-          LLM_PROVIDER: gemini
+          # Claude writes (Opus) and a different Claude model checks (Sonnet),
+          # on the subscription only: the code strips any API key from the
+          # CLI's environment, so nothing here can be billed per token.
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'claude' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL || 'claude-opus-5-5,claude-sonnet-5' }}
+          VERIFY_PROVIDER: ${{ vars.VERIFY_PROVIDER || 'claude' }}
+          VERIFY_MODEL: ${{ vars.CLAUDE_VERIFY_MODEL || 'claude-sonnet-5' }}
+          # When Claude cannot answer (usage limit, no token), every request
+          # for the rest of the run goes to Gemini's free tier instead.
+          FALLBACK_PROVIDER: gemini
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           # Best first. Free tiers meter per model, so every model in the chain
           # is another day's allowance. The code appends backup models with
           # allowances of their own (GEMINI_FALLBACK_MODELS, in config.py)
           # after whatever this is set to, including a repository variable.
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash' }}
-          # A checker that is not the writer catches more, and free tiers
-          # meter per model, so this also doubles the daily allowance. Its
-          # backup (VERIFY_FALLBACK_MODELS) is not the writer's either.
-          VERIFY_MODEL: ${{ vars.VERIFY_MODEL || 'gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.1-flash-lite' }}
+          # Gemini's checker, for the days it takes over. Not the writer's
+          # model, and its backup (VERIFY_FALLBACK_MODELS) is not either.
+          FALLBACK_VERIFY_MODEL: ${{ vars.VERIFY_MODEL || 'gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.1-flash-lite' }}
           # The manual inputs arrive through the environment, never pasted into
           # the script, so a topic with a quote in it is only ever a topic.
           IN_RUN_DATE: ${{ inputs.run_date }}

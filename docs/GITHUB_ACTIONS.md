@@ -21,9 +21,21 @@ them up, and your phone and desktop pull them down like any other change.
 
 ## Setup
 
-Two secrets, under Settings → Secrets and variables → Actions.
+Secrets, under Settings → Secrets and variables → Actions.
 
-**`GOOGLE_API_KEY`** — your Gemini key.
+**`CLAUDE_CODE_OAUTH_TOKEN`** — optional, and what writes the cards when set:
+Claude Opus writes them and Claude Sonnet checks them, on your Claude
+subscription (Pro or Max), through the Claude Code CLI. Make one locally with
+`claude setup-token` and store it with `gh secret set CLAUDE_CODE_OAUTH_TOKEN`
+(it prompts for the value). The code removes any Anthropic API key from the
+CLI's environment, so these calls can only ever run on the subscription.
+Whenever Claude cannot answer (the plan's usage limit reached, a missing or
+expired token), the rest of that run goes to Gemini instead. Keep *extra
+usage* off at claude.ai/settings/usage if a reached limit should mean Gemini
+rather than paid overage.
+
+**`GOOGLE_API_KEY`** — your Gemini key: the fallback above, and what checks
+pictures found on the web.
 
 **`ANKIWEB_KEY`** — a sync token, not your password. Get one locally:
 
@@ -36,9 +48,11 @@ It prints `ANKIWEB_KEY=...`. Add that as the secret, and put it in your local
 `.env` too so `pull` and `push` work from your machine. Changing your AnkiWeb
 password invalidates it.
 
-Optionally set *variables* (not secrets) `GEMINI_MODEL` and `VERIFY_MODEL` to
-change models without editing the workflow. Both take a comma-separated
-preference order, best first.
+Optionally set *variables* (not secrets) to change models without editing the
+workflow, each a comma-separated preference order, best first:
+`CLAUDE_MODEL` and `CLAUDE_VERIFY_MODEL` for Claude's writer and checker,
+`GEMINI_MODEL` and `VERIFY_MODEL` for Gemini's. `LLM_PROVIDER=gemini` and
+`VERIFY_PROVIDER=gemini` put Gemini back in front.
 
 Then Actions → **daily cards** → Run workflow. After that it runs daily at
 08:17 UTC (05:17 in São Paulo), with a backup at 11:43 UTC that does nothing if

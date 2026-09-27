@@ -8,7 +8,11 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 
@@ -59,6 +63,67 @@ FALLTHROUGH_ATTEMPTS = 1
 
 class QuotaExhausted(RuntimeError):
     """The provider's allowance for the day is gone. Nothing to wait for."""
+
+
+class ProviderUnavailable(RuntimeError):
+    """The provider cannot answer this run at all: a usage limit, no login,
+    no CLI. Not retried, and not tried on the next model either, since every
+    model behind one subscription shares its limit."""
+
+
+# Providers that failed outright this run, with why. Once Claude has said its
+# usage limit is reached, every later request goes straight to the fallback
+# instead of asking again and waiting to be told the same thing.
+_down: dict[str, str] = {}
+
+# The Claude Code CLI, told to be a plain JSON endpoint: no tools, none of this
+# machine's settings or MCP servers, no CLAUDE.md from a working directory, and
+# a one-line system prompt in place of Claude Code's own, which is far longer
+# than any card prompt and would be spent from the usage limit on every call.
+CLAUDE_SYSTEM = ("You write and check flashcards for a learning pipeline. Follow the "
+                 "user's instructions exactly and reply with JSON only, no prose.")
+CLAUDE_TIMEOUT = 600
+# Credentials that would make the CLI bill an API account instead of using the
+# subscription login. Removed from its environment, so that a stray key on a
+# machine or in CI can never turn a free call into a paid one.
+_API_CREDENTIALS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+                    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+                    "CLAUDE_CODE_USE_FOUNDRY")
+_LIMIT = re.compile(r"usage limit|hit your limit|limit reached|out of (?:extra )?usage|"
+                    r"credit balance|not logged in|please run /login|invalid api key|"
+                    r"oauth token|authentication", re.IGNORECASE)
+
+
+def _claude_json(model: str, prompt: str) -> tuple[str, int, int]:
+    """One answer from Claude through the Claude Code CLI, on the subscription."""
+    cli = shutil.which("claude")
+    if not cli:
+        raise ProviderUnavailable("the Claude Code CLI is not installed")
+    env = {k: v for k, v in os.environ.items() if k not in _API_CREDENTIALS}
+    try:
+        proc = subprocess.run(
+            [cli, "-p", "--output-format", "json", "--model", model, "--tools", "",
+             "--system-prompt", CLAUDE_SYSTEM, "--setting-sources", "",
+             "--strict-mcp-config", "--no-session-persistence"],
+            input=prompt, capture_output=True, text=True, encoding="utf-8",
+            env=env, cwd=tempfile.gettempdir(), timeout=CLAUDE_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise TransientProviderError(f"claude timeout after {CLAUDE_TIMEOUT}s") from e
+    try:
+        out = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        out = {}
+    if proc.returncode != 0 or out.get("is_error") or out.get("subtype") != "success":
+        problem = str(out.get("result") or proc.stderr or proc.stdout or "no output").strip()
+        problem = f"claude ({model}): {problem[:300]}"
+        if _LIMIT.search(problem):
+            raise ProviderUnavailable(problem)
+        raise RuntimeError(problem)
+    usage = out.get("usage") or {}
+    read = (usage.get("input_tokens", 0) + usage.get("cache_creation_input_tokens", 0)
+            + usage.get("cache_read_input_tokens", 0))
+    return extract_json(out.get("result", "")), read, usage.get("output_tokens", 0)
 
 
 def _is_retryable(message: str) -> bool:
@@ -207,15 +272,31 @@ def preflight() -> None:
     """
     for label, cfg in (("LLM_PROVIDER", settings.resolve_llm()),
                        ("the card checker (VERIFY_PROVIDER)", settings.resolve_verify())):
-        provider, model = cfg["provider"], cfg["model"]
-        if not model:
-            raise RuntimeError(f"{label} is {provider} but no model is configured.")
-        if provider == "gemini":
-            if not settings.google_api_key:
-                raise RuntimeError(f"{label} is gemini but GOOGLE_API_KEY is empty.")
-            _get_gemini_client()                  # raises if google-genai is missing
-        elif cfg.get("needs_key") and not cfg.get("api_key"):
-            raise RuntimeError(f"{label} is {provider} but LLM_API_KEY is empty.")
+        _preflight_one(label, cfg)
+
+
+def _preflight_one(label: str, cfg: dict) -> None:
+    provider, model = cfg["provider"], cfg["model"]
+    if not model:
+        raise RuntimeError(f"{label} is {provider} but no model is configured.")
+    fallback = cfg.get("fallback")
+    if fallback:
+        _preflight_one(f"{label}'s fallback", fallback)
+    if provider == "claude":
+        if not shutil.which("claude"):
+            if not fallback:
+                raise RuntimeError(f"{label} is claude but the Claude Code CLI is not "
+                                   "installed (npm install -g @anthropic-ai/claude-code).")
+            logger.warning("The Claude Code CLI is not installed; using %s for this run.",
+                           fallback["provider"])
+            _down[provider] = "the Claude Code CLI is not installed"
+        return
+    if provider == "gemini":
+        if not settings.google_api_key:
+            raise RuntimeError(f"{label} is gemini but GOOGLE_API_KEY is empty.")
+        _get_gemini_client()                      # raises if google-genai is missing
+    elif cfg.get("needs_key") and not cfg.get("api_key"):
+        raise RuntimeError(f"{label} is {provider} but LLM_API_KEY is empty.")
 
 
 def _call_one_model(prompt: str, cfg: dict, model: str, max_retries: int) -> LLMResult:
@@ -223,6 +304,9 @@ def _call_one_model(prompt: str, cfg: dict, model: str, max_retries: int) -> LLM
     ensure_free(cfg["provider"], model, settings.allow_paid_models)
     for attempt in range(max_retries):
         try:
+            if cfg["provider"] == "claude":
+                text, p_tok, c_tok = _claude_json(model, prompt)
+                return LLMResult(json.loads(text), model, p_tok, c_tok)
             if cfg["provider"] == "gemini":
                 from google.genai import types
                 client = _get_gemini_client()
@@ -258,6 +342,8 @@ def _call_one_model(prompt: str, cfg: dict, model: str, max_retries: int) -> LLM
             logger.warning("JSON parse failed (attempt %d/%d): %s", attempt + 1, max_retries, e)
             if attempt == max_retries - 1:
                 raise
+        except ProviderUnavailable:
+            raise
         except Exception as e:
             msg = str(e)
             if _is_daily_quota(msg):
@@ -277,6 +363,31 @@ def _call_one_model(prompt: str, cfg: dict, model: str, max_retries: int) -> LLM
 
 
 def call_json(prompt: str, max_retries: int = 5, cfg: dict | None = None) -> LLMResult:
+    """One JSON completion from the configured provider, or from its fallback.
+
+    The fallback takes over when the provider fails outright, whatever the
+    reason, and keeps every later request for the rest of the run: a Claude
+    subscription that has reached its usage limit stays there for hours, and
+    the answer to that is the free tier, never a purchase.
+    """
+    cfg = cfg or settings.resolve_llm()
+    fallback = cfg.get("fallback")
+    if fallback and cfg["provider"] in _down:
+        return _call_chain(prompt, max_retries, fallback)
+    try:
+        return _call_chain(prompt, max_retries, cfg)
+    except Exception as e:
+        if not fallback:
+            raise
+        if not isinstance(e, json.JSONDecodeError):
+            # One garbled answer is that prompt's problem, not the provider's.
+            _down[cfg["provider"]] = str(e)
+        logger.warning("%s could not answer (%s); using %s instead",
+                       cfg["provider"], str(e)[:120], fallback["provider"])
+        return _call_chain(prompt, max_retries, fallback)
+
+
+def _call_chain(prompt: str, max_retries: int, cfg: dict) -> LLMResult:
     """One JSON completion, working down the configured chain of models.
 
     Two things make a chain worth having rather than a single model. Free tiers
@@ -313,6 +424,8 @@ def call_json(prompt: str, max_retries: int = 5, cfg: dict | None = None) -> LLM
             logger.warning("%s is out of quota for today; falling back", model)
             _spent.add(model)
             last = e
+        except ProviderUnavailable:
+            raise                           # the next model shares the same limit
         except Exception as e:
             if not _is_retryable(str(e)):
                 raise                       # a real error: bad key, bad request
@@ -352,6 +465,13 @@ def check_image(image: bytes, card: str, query: str, cfg: dict | None = None) ->
     image catches that.
     """
     cfg = cfg or settings.resolve_llm()
+    if cfg["provider"] == "claude":
+        # The CLI takes text on stdin; a picture would need its file tools,
+        # which are switched off. Its fallback looks at pictures natively.
+        if not cfg.get("fallback"):
+            raise RuntimeError("Pictures are checked by FALLBACK_PROVIDER when the "
+                               "checker is claude, and none is set.")
+        cfg = cfg["fallback"]
     prompt = IMAGE_CHECK_PROMPT.format(card=card[:400], query=query)
     chain = [m for m in (cfg.get("models") or [cfg["model"]]) if m and m not in _spent]
     if not chain:

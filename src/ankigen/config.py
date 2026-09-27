@@ -95,6 +95,8 @@ PROVIDERS: dict[str, dict] = {
 # Reached through google-genai rather than the OpenAI SDK, so it is handled
 # on its own path in agents.py / embeddings.py.
 NATIVE_PROVIDERS = {"gemini"}
+# Reached through the Claude Code CLI, on a subscription login (see llm.py).
+CLAUDE = "claude"
 
 # Embeddings computed in-process from an ONNX model: no server, no key, no
 # quota, and nothing to be "not running". That is what makes the pipeline
@@ -107,7 +109,7 @@ DEFAULT_SEMANTIC_THRESHOLD = 0.90
 
 
 def provider_names() -> list[str]:
-    return sorted(PROVIDERS) + sorted(NATIVE_PROVIDERS)
+    return sorted(PROVIDERS) + sorted(NATIVE_PROVIDERS) + [CLAUDE]
 
 
 class PaidModelBlocked(RuntimeError):
@@ -182,6 +184,19 @@ class Settings(BaseSettings):
     verify_fallback_models: str = "gemma-4-26b-a4b-it"
     embedding_model: str = "gemini-embedding-001"
 
+    # Claude, through the Claude Code CLI on a Claude subscription (Pro, Max),
+    # never an API key: `claude setup-token` makes the CLAUDE_CODE_OAUTH_TOKEN
+    # it runs on in CI, and a local `claude` login works as it is. Best first.
+    claude_model: str = "claude-opus-5-5,claude-sonnet-5"
+
+    # Where every request goes once the provider above cannot answer at all:
+    # the subscription's usage limit reached, no login, the CLI missing. Set
+    # to "gemini", a day with no Claude left carries on on the free tier.
+    fallback_provider: str = ""
+    # The checker's chain on that provider, since VERIFY_MODEL names the main
+    # provider's checker. Empty means the fallback's own writing chain.
+    fallback_verify_model: str = ""
+
     # Retained so existing .env files and the Ollama defaults keep working.
     ollama_base_url: str = "http://localhost:11434/v1"
     ollama_model: str = "phi4-mini"
@@ -224,6 +239,17 @@ class Settings(BaseSettings):
     def resolve_llm(self) -> dict:
         """Effective chat config: {provider, base_url, api_key, model, needs_key}."""
         name = (self.llm_provider or "ollama").strip().lower()
+
+        if name == CLAUDE:
+            chain = model_chain(self.claude_model)
+            return self._with_fallback({
+                "provider": name,
+                "base_url": None,
+                "api_key": "",
+                "model": chain[0] if chain else "",
+                "models": chain,
+                "needs_key": False,
+            }, verify=False)
 
         if name in NATIVE_PROVIDERS:
             chain = model_chain(self.gemini_model)
@@ -275,12 +301,25 @@ class Settings(BaseSettings):
             "llm_provider": self.verify_provider or self.llm_provider,
             "llm_model": "" if self.verify_provider else self.verify_model,
             "gemini_model": self.verify_model or self.gemini_model,
+            "claude_model": self.verify_model or self.claude_model,
             "gemini_fallback_models": self.verify_fallback_models,
+            "fallback_provider": "",        # the checker's own is attached below
         })
         cfg = overridden.resolve_llm()
         if self.verify_model and self.verify_provider:
             chain = model_chain(self.verify_model)
             cfg["model"], cfg["models"] = chain[0], chain
+        return self._with_fallback(cfg, verify=True)
+
+    def _with_fallback(self, cfg: dict, verify: bool) -> dict:
+        """Attach the fallback provider's config, for the writer or the checker."""
+        name = (self.fallback_provider or "").strip().lower()
+        if name and name != cfg["provider"]:
+            other = self.model_copy(update={
+                "llm_provider": name, "fallback_provider": "",
+                "verify_provider": "", "verify_model": self.fallback_verify_model,
+            })
+            cfg["fallback"] = other.resolve_verify() if verify else other.resolve_llm()
         return cfg
 
     def resolve_embedding(self) -> dict:
