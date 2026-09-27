@@ -4,21 +4,21 @@
 # would generate and the exact prompts.
 
 learner:
-  level: "working data scientist, learning data platform engineering on AWS from the ground up"
+  level: "new to Linux, containers and cloud infrastructure; comfortable with Python and SQL"
   language: English
   goals:
     # Quote anything containing ": " - unquoted, YAML reads it as a mapping.
-    - "Build, run and explain a data platform on AWS: storage, compute, orchestration, infrastructure as code"
-    - "Interview-ready as a data or platform engineer, with the fundamentals under the tools"
-    - "Understand the why behind tools, not just the commands"
+    - "Learn data platform engineering on AWS from the ground up, from the terminal to system design"
+    - "Use the tools day to day: the commands, the shortcuts, the files you actually write"
+    - "Understand how they work underneath, and later why they fail in production"
 
 style:
   max_answer_words: 40
   examples_per_prompt: 4
   rules:
-    - Prefer questions a practitioner would actually be asked on the job or in an interview.
+    - Prefer what the learner will actually type, read or be asked about when doing the work.
     - When a concept has a common misconception, write the card to target it.
-    - For tooling, test behaviour and trade-offs, not version-specific trivia.
+    - For tooling, test behaviour, not version-specific trivia.
 
 # Cards you keep failing get a fresh angle (an example, a contrast) instead of a rephrase.
 weak_cards:
@@ -27,354 +27,556 @@ weak_cards:
   max_ease: 2100
   max_per_deck: 1
 
-global_quota: 15
+global_quota: 20
 verify: true
 
-# Fetch an illustration when the model judges one genuinely helps.
-# Per-deck `images: false` opts a deck out, and `image_context` is put in
-# front of that deck's image searches, so "airflow pool" is searched as
-# "Apache Airflow pool" and not as a swimming pool.
+# Fetch an illustration when the model judges one genuinely helps. Only
+# concept and scenario cards ask for one; commands and code never do.
+# `image_context` is put in front of that deck's image searches, so "airflow
+# pool" is searched as "Apache Airflow pool" and not as a swimming pool.
 images: true
 
 # Empty = notes go straight into the deck above, tagged ankigen::run_<date>,
 # so there is nothing to merge. Set e.g. "AnkiGen" for a subdeck instead.
 inbox: ""
 
-# Two kinds of deck:
-# - with `start:`, a deck is part of the curriculum. Nothing happens before
-#   that date; then it covers its topics once, in order from the first, at
-#   daily_quota / 5 topics a day (5 cards each), and stops. Decks follow one
-#   another, and `ankigen validate` prints when each one runs.
-# - without it, topics rotate by date and wrap around, for as long as the
-#   deck has a quota above 0.
+# The curriculum. Each deck starts on its `start:` date, covers its topics once
+# in order at daily_quota / 5 topics a day (5 cards each), and stops; the next
+# deck starts the day after. The first deck's first day is a kickoff of
+# first_day_quota cards. `ankigen validate` prints when each deck runs.
+#
+# Topics come in four levels, 1 (never used it) to 4 (interview), and each has
+# a kind that decides what its cards look like:
+#   command   a task, and the command for it: learned both ways
+#   shortcut  a task, and the keys for it: learned both ways
+#   concept   a short question, and a one-sentence answer
+#   build     a real file or script with one part hidden
+#   scenario  a situation, what happens and why (mostly level 4)
+#
+# A deck can still be a plain `topics:` list instead, written in its
+# card_type (basic, cloze or detailed), rotating when it has no start date.
 decks:
-  # === The Data Platform curriculum: fundamentals first, AWS data infrastructure last.
+  # === The Data Platform curriculum: from the terminal to system design on AWS.
   # Numbered so Anki lists the decks in the order they are studied.
 
-  - deck: Data Platform::01 Linux & Networking
+  - deck: Data Platform::01 Linux
     new_deck: true
-    start: 2026-09-25
-    daily_quota: 15
-    card_type: detailed
-    image_context: "Linux networking"
-    topics:
-      - "the shell: commands, arguments, pipes and redirection"
-      - files, directories and the Linux filesystem layout
-      - users, groups and file permissions
-      - processes, signals and exit codes
-      - environment variables and how a program finds its configuration
-      - package managers and installing software on a server
-      - services and daemons with systemd
-      - logs, and reading them with tail, grep and journalctl
-      - SSH, key pairs and connecting to a remote machine
-      - "IP addresses, subnets and CIDR notation"
-      - TCP versus UDP, and what a port is
-      - DNS and how a name becomes an address
-      - HTTP requests, responses and status codes
-      - "TLS: certificates and what HTTPS actually protects"
-      - "debugging connectivity: ping, curl, dig and netstat"
-      - "cron, and scheduling a job on a single machine"
+    start: 2026-09-28
+    first_day_quota: 100
+    daily_quota: 20
+    card_type: basic
+    image_context: "Linux"
     instructions: >
-      The learner comes from notebooks and has rarely administered a server.
-      Tie each concept to what it means when running data services in the cloud.
+      Assume a Linux server such as Ubuntu or Amazon Linux, used through a
+      terminal, with bash as the shell.
+    levels:
+      1:
+        - concept: "what the terminal, the shell and a command are"
+        - command: "moving around: pwd, cd, ls, and the home directory"
+        - concept: "absolute versus relative paths, and what ., .. and ~ mean"
+        - shortcut: "terminal shortcuts: Tab completion, Ctrl+C, Ctrl+L and the arrow keys"
+        - shortcut: "command history: Ctrl+R, !!, history, and re-running a command"
+        - shortcut: "editing the command line: Ctrl+A, Ctrl+E, Ctrl+U and Ctrl+W"
+        - command: "listing files: ls -l, ls -a, ls -lh, and reading the output"
+        - command: "creating and removing: mkdir, touch, rm, rm -r and rmdir"
+        - command: "copying, moving and renaming: cp, cp -r and mv"
+        - command: "reading files: cat, less, head and tail"
+        - shortcut: "moving around inside less: space, b, /search, n and q"
+        - command: "getting help: man, --help, and reading a man page"
+        - command: "wildcards: *, ? and braces, and what the shell expands"
+        - command: "editing a file with nano: open, save and exit"
+        - shortcut: "surviving vim: i, Esc, :w, :q, :wq and :q!"
+        - concept: "users, the root user, and sudo"
+        - command: "file permissions: reading rwx in ls -l, chmod and chown"
+        - command: "pipes and redirection: |, >, >>, 2> and <"
+        - command: "searching text: grep, grep -i, grep -r and grep -v"
+        - command: "finding files: find by name, type and modification time"
+      2:
+        - command: "counting and sorting: wc, sort, uniq and cut"
+        - concept: "processes, PIDs, and what happens when you run a command"
+        - command: "watching processes: ps aux, top and htop"
+        - command: "stopping processes: Ctrl+C, kill, kill -9 and pkill"
+        - command: "jobs: &, Ctrl+Z, bg, fg, jobs and nohup"
+        - concept: "environment variables, PATH, and export"
+        - build: "shell configuration in .bashrc: aliases and exported variables"
+        - command: "installing software: apt update, apt install and apt remove"
+        - command: "disk space: df -h, du -sh, and finding what is big"
+        - command: "archives: tar czf, tar xzf, zip and unzip"
+        - command: "calling URLs and downloading: curl and wget"
+        - build: "a first bash script: shebang, variables, arguments and chmod +x"
+        - concept: "exit codes, and how && and || use them"
+        - build: "a bash script that stops on errors: set -euo pipefail and checking $?"
+      3:
+        - command: "connecting to a server: ssh, ssh-keygen and ~/.ssh/config"
+        - command: "copying files between machines: scp and rsync"
+        - command: "services with systemd: systemctl start, stop, status and enable"
+        - command: "reading logs: journalctl -u, journalctl -f, and /var/log"
+        - concept: "signals: SIGTERM, SIGKILL, SIGHUP, and graceful shutdown"
+        - build: "scheduling a job with cron: crontab -e and the five time fields"
+        - concept: "inodes, hard links and symbolic links"
+        - concept: "file descriptors, stdin, stdout and stderr"
+      4:
+        - scenario: "a full disk: deleted files still held open, inodes, and log rotation"
+        - scenario: "a process killed by the out-of-memory killer, and exit code 137"
+        - scenario: "a script that works in your shell but not from cron"
+        - scenario: "permission denied: ownership, execute bits, and directories"
 
-  - deck: Data Platform::02 Data Fundamentals
+  - deck: Data Platform::02 Networking
     new_deck: true
-    start: 2026-10-01
-    daily_quota: 15
-    card_type: detailed
+    start: 2026-10-06
+    daily_quota: 20
+    card_type: basic
+    image_context: "computer networking"
+    levels:
+      1:
+        - concept: "what an IP address and a port are"
+        - concept: "what DNS does: turning a name into an address"
+        - concept: "clients, servers, requests and responses"
+        - concept: "HTTP: methods, status codes and headers"
+        - command: "checking connectivity: ping, curl -I and curl -v"
+        - command: "looking up names: dig, nslookup and /etc/hosts"
+      2:
+        - concept: "private versus public IP addresses, and NAT"
+        - concept: "CIDR notation: reading 10.0.0.0/16 and /24"
+        - concept: "TCP versus UDP"
+        - concept: "TLS and HTTPS: certificates and what they protect"
+        - command: "which ports are listening: ss -tlnp and lsof -i"
+        - concept: "localhost, 0.0.0.0, and binding a service to an interface"
+      3:
+        - concept: "firewalls and security groups: allowing a port"
+        - concept: "load balancers and reverse proxies"
+        - command: "SSH tunnels: ssh -L, ssh -J and port forwarding"
+        - scenario: "connection refused versus a timeout: what each tells you"
+      4:
+        - scenario: "a service that works on the server but not from your laptop"
+        - scenario: "a DNS record that changed but clients still use the old address"
+
+  - deck: Data Platform::03 Git
+    new_deck: true
+    start: 2026-10-11
+    daily_quota: 20
+    card_type: basic
+    image_context: "Git"
+    levels:
+      1:
+        - concept: "what version control and Git are for"
+        - command: "starting: git init, git clone and git status"
+        - command: "saving work: git add, git commit and git log"
+        - concept: "the working directory, the staging area and commits"
+        - command: "branches: git branch, git switch and git merge"
+        - command: "working with GitHub: git remote, git push and git pull"
+        - build: "a .gitignore for a Python data project"
+      2:
+        - command: "seeing changes: git diff, git diff --staged and git show"
+        - command: "undoing: git restore, git reset and git revert"
+        - concept: "pull requests and code review"
+        - concept: "merge conflicts: why they happen and how to resolve them"
+        - command: "setting work aside: git stash, git stash pop and git stash list"
+      3:
+        - concept: "rebase versus merge"
+        - concept: "a secret committed to Git, and why it must be rotated"
+        - build: "a GitHub Actions workflow that runs tests on every push"
+      4:
+        - scenario: "recovering a commit you lost with git reflog"
+
+  - deck: Data Platform::04 Data Fundamentals
+    new_deck: true
+    start: 2026-10-15
+    daily_quota: 20
+    card_type: basic
     image_context: "data engineering"
-    topics:
-      - "the shape of a data platform: ingestion, storage, transformation, serving"
-      - OLTP versus OLAP, and why they store data differently
-      - row versus columnar storage, and what columnar buys you
-      - "file formats: CSV, JSON, Parquet and Avro trade-offs"
-      - compression and encoding in columnar files
-      - partitioning, file sizes and the small-file problem
-      - data lake versus warehouse versus lakehouse
-      - schema on read versus schema on write
-      - batch versus streaming, and when each is the right shape
-      - idempotency and determinism, and why reruns must be safe
-      - "incremental versus full loads: watermarks and late-arriving data"
-      - change data capture and replicating a database
-      - ETL versus ELT, and where the transformation belongs
-      - "orchestration versus scheduling: dependencies, retries and state"
-      - what makes a backfill cheap or expensive
-      - "data quality checks: freshness, completeness, uniqueness"
-      - lineage, catalogues and why metadata is infrastructure
-      - "cost and performance on object storage: scan volume and pruning"
     instructions: >
-      Tool-neutral. Explain the trade-off or the failure mode a practitioner
-      actually runs into, not a vendor's marketing distinction.
+      Tool-neutral. Explain the trade-off or the failure a practitioner actually
+      runs into, not a vendor's marketing distinction.
+    levels:
+      1:
+        - concept: "what a data platform does: ingestion, storage, transformation and serving"
+        - concept: "OLTP versus OLAP"
+        - concept: "batch versus streaming"
+        - concept: "ETL versus ELT"
+        - concept: "data lake versus data warehouse versus lakehouse"
+        - concept: "file formats: CSV, JSON, Parquet and Avro"
+      2:
+        - concept: "row versus columnar storage, and what columnar buys you"
+        - concept: "compression and encoding in columnar files"
+        - concept: "partitioning, file sizes and the small-file problem"
+        - concept: "schema on read versus schema on write"
+        - concept: "incremental versus full loads, and watermarks"
+        - concept: "change data capture"
+        - concept: "orchestration: dependencies, retries and state"
+      3:
+        - concept: "idempotency: why reruns must be safe"
+        - concept: "backfills, and what makes them cheap or expensive"
+        - concept: "data quality checks: freshness, completeness and uniqueness"
+        - concept: "lineage and data catalogues"
+        - concept: "late-arriving data"
+      4:
+        - scenario: "a daily job that ran twice and doubled a table"
+        - scenario: "a query on object storage that costs far more than expected"
 
-  - deck: Data Platform::03 Modelling & SQL
+  - deck: Data Platform::05 Modelling & SQL
     new_deck: true
-    start: 2026-10-07
-    daily_quota: 15
-    card_type: detailed
+    start: 2026-10-20
+    daily_quota: 20
+    card_type: basic
     image_context: "data modeling"
-    topics:
-      - normalisation, and why analytics denormalises
-      - "facts and dimensions: the star schema"
-      - grain, and declaring it before anything else
-      - snowflake schemas versus wide flat tables
-      - surrogate keys versus natural keys
-      - slowly changing dimensions, type 1 versus type 2
-      - "fact table types: transaction, periodic snapshot, accumulating snapshot"
-      - "the medallion layers: bronze, silver, gold"
-      - window functions for deduplication and sessionisation
-      - MERGE and upserts in a warehouse
-      - how a distributed SQL engine runs a join
-      - reading a query plan to find the expensive step
-      - "dbt: models, refs and the DAG they build"
-      - "dbt tests, sources and freshness"
-      - incremental models and their failure modes
-      - "data contracts: agreeing on a schema with the producers"
     instructions: >
-      Use small SQL snippets in backticks where they make the point. The
-      learner already writes analytical SQL; focus on modelling and scale.
+      The learner already writes analytical SQL. Use a PostgreSQL-flavoured
+      dialect unless the topic names another.
+    levels:
+      1:
+        - concept: "normalisation, and why analytics denormalises"
+        - concept: "facts and dimensions: the star schema"
+        - concept: "grain: what one row of a table means"
+        - build: "a CREATE TABLE for a fact table and a dimension table"
+      2:
+        - concept: "surrogate keys versus natural keys"
+        - concept: "slowly changing dimensions: type 1 versus type 2"
+        - build: "deduplicating rows with ROW_NUMBER over a partition"
+        - build: "an upsert with MERGE"
+        - concept: "fact table types: transaction, periodic snapshot and accumulating snapshot"
+        - concept: "the medallion layers: bronze, silver and gold"
+      3:
+        - concept: "dbt: models, ref and the DAG they build"
+        - build: "a dbt model and its tests in schema.yml"
+        - concept: "incremental models in dbt"
+        - concept: "reading a query plan to find the expensive step"
+      4:
+        - scenario: "a join that multiplies rows because the grain was wrong"
+        - scenario: "a type 2 dimension joined without its validity dates"
+        - concept: "data contracts with the teams that produce the data"
 
-  - deck: Data Platform::04 Docker
+  - deck: Data Platform::06 Docker
     new_deck: true
-    start: 2026-10-13
-    daily_quota: 15
-    card_type: detailed
+    start: 2026-10-25
+    daily_quota: 20
+    card_type: basic
     image_context: "Docker"
-    topics:
-      - containers versus virtual machines
-      - images, layers and the build cache
-      - the Dockerfile instructions that actually matter
-      - multi-stage builds and image size
-      - ENTRYPOINT versus CMD
-      - volumes, bind mounts and container state
-      - networking, ports and service discovery
-      - environment variables, configuration and secrets
-      - running as a non-root user, and why
-      - Compose for multi-container stacks
-      - "debugging a container: logs, exec and inspect"
-      - registries, tags and digests
+    levels:
+      1:
+        - concept: "what problem Docker solves"
+        - concept: "images versus containers"
+        - concept: "containers versus virtual machines"
+        - command: "running a container: docker run, -d, --name and --rm"
+        - command: "ports and environment variables: docker run -p and -e"
+        - command: "seeing what runs: docker ps, docker ps -a and docker logs"
+        - command: "getting inside and stopping: docker exec -it, docker stop and docker rm"
+        - command: "images: docker pull, docker images and docker rmi"
+        - build: "a first Dockerfile for a Python script: FROM, COPY and CMD"
+        - build: "installing dependencies: WORKDIR, COPY requirements.txt and RUN pip install"
+        - command: "building and tagging an image: docker build -t and the build context"
+      2:
+        - concept: "layers and the build cache, and ordering a Dockerfile for it"
+        - build: "a .dockerignore that keeps the build context small"
+        - concept: "ENTRYPOINT versus CMD"
+        - command: "volumes and bind mounts: docker run -v"
+        - concept: "why files written inside a container disappear"
+        - build: "a docker-compose.yml with an app and a Postgres database"
+        - command: "Compose commands: up, up -d, down, logs and ps"
+      3:
+        - build: "a multi-stage build for a smaller image"
+        - concept: "running as a non-root user with USER"
+        - concept: "configuration and secrets: what never to bake into an image"
+        - concept: "container networking and service names in Compose"
+        - command: "registries: docker tag, docker push, and logging in to Amazon ECR"
+        - command: "debugging: docker inspect, docker exec, and reading exit codes"
+      4:
+        - scenario: "an image that is 2 GB, and how to shrink it"
+        - scenario: "a container that takes 10 seconds to stop"
+        - scenario: "a build that reinstalls every dependency on each code change"
 
-  - deck: Data Platform::05 AWS Core
+  - deck: Data Platform::07 AWS Core
     new_deck: true
-    start: 2026-10-17
-    daily_quota: 15
-    card_type: detailed
+    start: 2026-11-01
+    daily_quota: 20
+    card_type: basic
     image_context: "AWS"
-    topics:
-      - "regions, availability zones, and what fails together"
-      - the shared responsibility model
-      - "IAM: users, groups, roles and policies"
-      - identity policies versus resource policies, and how they combine
-      - "assuming a role: STS and temporary credentials"
-      - least privilege, and writing a policy that grants only that
-      - "S3: buckets, objects, prefixes and the folders that do not exist"
-      - "S3 storage classes, lifecycle rules and versioning"
-      - S3 bucket policies, block public access and encryption
-      - "KMS: keys, envelope encryption and who can decrypt"
-      - "VPC: subnets, route tables and internet gateways"
-      - public versus private subnets, and NAT gateways
-      - security groups versus network ACLs
-      - VPC endpoints, and reaching S3 without the internet
-      - EC2 instance types, AMIs and instance profiles
-      - "CloudWatch: metrics, logs and alarms"
-      - CloudTrail, and who did what
-      - "keeping the bill low: budgets, the free tier and what quietly costs money"
     instructions: >
-      Explain the mechanism and the typical misconfiguration, not the console
+      Explain the mechanism and the usual misconfiguration, not the console
       clicks. Prefer what matters when AWS hosts a data platform.
+    levels:
+      1:
+        - concept: "what the cloud is: renting computers, storage and services"
+        - concept: "regions and availability zones"
+        - concept: "the AWS console, the CLI and the SDKs"
+        - command: "setting up the AWS CLI: aws configure, profiles and aws sts get-caller-identity"
+        - concept: "IAM: users, groups, roles and policies"
+        - build: "reading an IAM policy: Effect, Action and Resource"
+        - concept: "S3: buckets, objects and keys"
+        - command: "S3 from the CLI: aws s3 ls, cp, sync and rm"
+        - concept: "EC2: instances, AMIs and instance types"
+        - concept: "the free tier, budgets, and what quietly costs money"
+      2:
+        - concept: "roles and temporary credentials: STS and assuming a role"
+        - concept: "least privilege, and why not to use the root account"
+        - concept: "identity policies versus resource policies"
+        - concept: "S3 storage classes, lifecycle rules and versioning"
+        - concept: "VPC: subnets, route tables and internet gateways"
+        - concept: "public versus private subnets, and NAT gateways"
+        - concept: "security groups versus network ACLs"
+        - command: "EC2 from the CLI: describe-instances, start-instances and stop-instances"
+      3:
+        - concept: "KMS and encryption at rest"
+        - concept: "S3 bucket policies and Block Public Access"
+        - concept: "VPC endpoints: reaching S3 without the internet"
+        - concept: "CloudWatch: metrics, logs and alarms"
+        - concept: "CloudTrail: who did what"
+        - concept: "instance profiles: credentials for code running on EC2"
+        - concept: "Lambda: running code without a server"
+        - concept: "Secrets Manager versus Parameter Store"
+      4:
+        - scenario: "an AccessDenied error, and how to find the missing permission"
+        - scenario: "an S3 bucket that became public"
+        - scenario: "a surprise bill: NAT gateways, data transfer and idle resources"
+        - scenario: "an instance in a private subnet that cannot reach the internet"
 
-  - deck: Data Platform::06 Terraform
+  - deck: Data Platform::08 Terraform
     new_deck: true
-    start: 2026-10-23
-    daily_quota: 15
-    card_type: detailed
+    start: 2026-11-09
+    daily_quota: 20
+    card_type: basic
     image_context: "Terraform"
-    topics:
-      - infrastructure as code, and what clicking in a console costs you later
-      - "providers, resources and data sources"
-      - the plan and apply cycle, and reading a plan
-      - "state: what it records and why it matters"
-      - remote state on S3 and state locking
-      - variables, outputs and locals
-      - "dependencies: implicit references versus depends_on"
-      - count versus for_each
-      - modules, and when a module is worth writing
-      - drift, and resources changed outside Terraform
-      - importing existing resources
-      - "lifecycle rules: prevent_destroy and create_before_destroy"
-      - workspaces versus separate state per environment
-      - secrets, and keeping them out of state and code
-      - Terraform versus CloudFormation versus CDK
-      - running Terraform from CI with a plan to review
+    levels:
+      1:
+        - concept: "infrastructure as code, and why not click in the console"
+        - concept: "providers, resources and data sources"
+        - command: "the workflow: terraform init, plan, apply and destroy"
+        - build: "a first main.tf: the AWS provider and an S3 bucket"
+        - concept: "reading a plan: create, update, replace and destroy"
+        - build: "variables, outputs and locals"
+      2:
+        - concept: "state: what it records and why it matters"
+        - build: "remote state in S3 with locking"
+        - concept: "implicit dependencies versus depends_on"
+        - build: "count versus for_each"
+        - concept: "modules, and when one is worth writing"
+        - command: "housekeeping: terraform fmt, terraform validate and terraform state list"
+      3:
+        - concept: "drift: changes made outside Terraform"
+        - command: "bringing existing resources in: terraform import and import blocks"
+        - concept: "lifecycle rules: prevent_destroy and create_before_destroy"
+        - concept: "environments: workspaces versus separate state"
+        - concept: "keeping secrets out of state and code"
+        - concept: "running Terraform from CI with a plan to review"
+      4:
+        - scenario: "a plan that wants to replace a database"
+        - scenario: "two people applying at the same time"
+        - concept: "Terraform versus CloudFormation versus CDK"
 
-  - deck: Data Platform::07 AWS Data Lake
+  - deck: Data Platform::09 AWS Data Lake
     new_deck: true
-    start: 2026-10-29
-    daily_quota: 15
-    card_type: detailed
+    start: 2026-11-15
+    daily_quota: 20
+    card_type: basic
     image_context: "AWS data lake"
-    topics:
-      - "data lake layout on S3: raw, curated and gold"
-      - partitioning a lake by date and the keys queries filter on
-      - "the Glue Data Catalog: databases, tables and partitions"
-      - Glue crawlers, and when to define tables yourself
-      - "Athena: querying files in place"
-      - what an Athena query scans, and what it costs
-      - partition projection versus registered partitions
-      - "table formats: why Iceberg, Delta and Hudi exist"
-      - "Iceberg: snapshots, time travel and schema evolution"
-      - "Iceberg: hidden partitioning and compaction"
-      - updates and deletes in a lake, and GDPR erasure
-      - Lake Formation permissions versus IAM on S3
-      - "ingestion into the lake: DMS, AppFlow and plain uploads"
-      - "S3 events: triggering work when a file lands"
-      - "lake anti-patterns: tiny files, deep prefixes, unpartitioned scans"
-      - cross-account access to a lake
+    levels:
+      1:
+        - concept: "what a data lake on S3 is"
+        - concept: "lake layout: raw, curated and gold zones"
+        - concept: "partitioning by date in S3 keys"
+        - concept: "the Glue Data Catalog: databases, tables and partitions"
+        - concept: "Athena: SQL on files in S3"
+        - build: "an Athena CREATE EXTERNAL TABLE over Parquet files"
+      2:
+        - concept: "what an Athena query scans, and what it costs"
+        - concept: "Glue crawlers, and when to define tables yourself"
+        - concept: "partition projection versus registered partitions"
+        - build: "converting CSV to partitioned Parquet with an Athena CTAS"
+        - concept: "table formats: why Iceberg, Delta and Hudi exist"
+      3:
+        - concept: "Iceberg: snapshots, time travel and schema evolution"
+        - concept: "updates and deletes in a lake"
+        - concept: "Lake Formation permissions versus IAM on S3"
+        - concept: "S3 events: starting work when a file lands"
+        - concept: "getting data in: DMS, Firehose and plain uploads"
+      4:
+        - scenario: "an Athena query that scans the whole bucket"
+        - scenario: "a lake full of tiny files"
+        - concept: "Iceberg compaction and hidden partitioning"
 
-  - deck: Data Platform::08 Spark on AWS
+  - deck: Data Platform::10 Spark
     new_deck: true
-    start: 2026-11-04
-    daily_quota: 15
-    card_type: detailed
+    start: 2026-11-20
+    daily_quota: 20
+    card_type: basic
     image_context: "Apache Spark"
-    topics:
-      - "Spark architecture: driver, executors and the cluster manager"
-      - lazy evaluation, and DataFrames versus RDDs
-      - "transformations versus actions: narrow versus wide and stage boundaries"
-      - "the Catalyst optimizer: logical and physical plans"
-      - predicate pushdown and column pruning on Parquet
-      - repartition versus coalesce, and sizing partitions
-      - "shuffles: what moves across the network and why it is slow"
-      - "join strategies: broadcast hash versus sort-merge"
-      - "data skew: spotting it and fixing it with AQE or salting"
-      - "the memory model, and diagnosing out-of-memory errors"
-      - caching and persistence trade-offs
-      - "reading the Spark UI: spills, stragglers and GC time"
-      - "EMR: clusters, EMR Serverless and when each fits"
-      - "Glue ETL jobs: DynamicFrames, job bookmarks and workers"
-      - writing to S3 safely, and why committers matter
-      - spot instances for Spark, and what happens when one is reclaimed
-    instructions: >
-      Focus on execution mechanics and debugging production jobs, not API
-      syntax. Use PySpark when a snippet helps.
+    instructions: Use PySpark for code.
+    levels:
+      1:
+        - concept: "what Spark is for, and when pandas is enough"
+        - concept: "the driver, the executors and the cluster"
+        - build: "a first PySpark job: read Parquet, filter and write"
+        - command: "DataFrame basics: select, filter, withColumn, groupBy and agg"
+        - concept: "lazy evaluation: transformations versus actions"
+      2:
+        - concept: "partitions, and how Spark splits the work"
+        - concept: "narrow versus wide transformations, and shuffles"
+        - build: "joins in PySpark, and broadcasting the small side"
+        - concept: "the Spark UI: jobs, stages and tasks"
+        - concept: "the Catalyst optimizer and explain()"
+        - concept: "predicate pushdown and column pruning on Parquet"
+      3:
+        - concept: "repartition versus coalesce, and output file sizes"
+        - build: "writing partitioned output with partitionBy"
+        - concept: "data skew, and how to spot it"
+        - concept: "memory, spills and out-of-memory errors"
+        - concept: "caching, and when it helps"
+        - concept: "EMR, EMR Serverless and Glue ETL jobs"
+      4:
+        - scenario: "a job where one task runs for an hour and the rest for a minute"
+        - scenario: "a job that fails with executors out of memory"
+        - scenario: "a job on spot instances that lost an executor"
+        - concept: "adaptive query execution"
 
-  - deck: Data Platform::09 Orchestration
-    new_deck: true
-    start: 2026-11-10
-    daily_quota: 15
-    card_type: detailed
-    image_context: "Apache Airflow"
-    topics:
-      - what an orchestrator is for, and what it is not
-      - "DAGs, tasks and operators: the vocabulary"
-      - logical date versus wall-clock time
-      - schedules, data intervals and catchup
-      - idempotent tasks and safe backfills
-      - dependencies, trigger rules and branching
-      - retries, timeouts and SLAs
-      - XCom, and why not to pass data through it
-      - "sensors: poke versus reschedule, and deferrable operators"
-      - pools, priority weights and concurrency limits
-      - the TaskFlow API and dynamic task mapping
-      - "executors, the scheduler and the metadata database"
-      - "anti-patterns: top-level code, heavy imports, data in XCom"
-      - "MWAA: managed Airflow, and what AWS runs for you"
-      - "Step Functions: state machines, retries and error handling"
-      - Airflow versus Step Functions versus EventBridge schedules
-      - testing DAGs and developing them locally
-
-  - deck: Data Platform::10 Streaming
-    new_deck: true
-    start: 2026-11-16
-    daily_quota: 15
-    card_type: detailed
-    image_context: "data streaming"
-    topics:
-      - events, streams and logs, and why a log is the core idea
-      - "Kafka: topics, partitions and offsets"
-      - consumer groups and rebalancing
-      - ordering guarantees, and what a partition key decides
-      - "delivery semantics: at-most-once, at-least-once, exactly-once"
-      - "Kinesis Data Streams: shards, throughput and retention"
-      - Kinesis versus MSK, and when to choose each
-      - "Firehose: delivering a stream to S3 in batches"
-      - "Lambda as a stream consumer: batching, retries and poison messages"
-      - event time versus processing time, and watermarks
-      - windowing and aggregating a stream
-      - streaming into a lake, and the small-file problem again
-      - "schemas on a stream: a registry and compatible changes"
-      - backpressure, lag, and alerting on it
-    instructions: >
-      Explain the guarantee and how it breaks. Assume the learner has the
-      batch fundamentals and is meeting streaming for the first time.
-
-  - deck: Data Platform::11 Warehouse
-    new_deck: true
-    start: 2026-11-21
-    daily_quota: 15
-    card_type: detailed
-    image_context: "Amazon Redshift"
-    topics:
-      - "Redshift architecture: leader node, compute nodes and slices"
-      - provisioned Redshift versus Redshift Serverless
-      - distribution styles and data movement in joins
-      - sort keys, zone maps and what they skip
-      - "COPY from S3: the fast way to load"
-      - vacuum, analyze and table maintenance
-      - workload management and concurrency scaling
-      - Redshift Spectrum and querying the lake
-      - materialized views and when they refresh
-      - "Redshift versus Athena versus Snowflake: choosing a warehouse"
-      - dbt on a warehouse, with environments and CI
-      - "semantic layers and metrics: one definition of revenue"
-      - serving data to BI tools and reverse ETL
-      - keeping warehouse costs predictable
-
-  - deck: Data Platform::12 Kubernetes & EKS
+  - deck: Data Platform::11 Orchestration
     new_deck: true
     start: 2026-11-26
-    daily_quota: 15
-    card_type: detailed
-    image_context: "Kubernetes"
-    topics:
-      - what Kubernetes adds over running containers yourself
-      - the control plane and the node components
-      - "pods: the unit of scheduling"
-      - deployments, replicasets and rolling updates
-      - jobs versus cronjobs for batch work
-      - services, and how traffic reaches a pod
-      - configmaps and secrets
-      - resource requests, limits and eviction
-      - liveness, readiness and startup probes
-      - "debugging a failing pod: describe, events and logs"
-      - "EKS: what AWS manages, and node groups versus Fargate"
-      - "IAM roles for service accounts: pods calling AWS"
-      - "running data workloads on Kubernetes: Spark, Airflow and autoscaling"
-      - Helm charts, and deploying a stack from them
+    daily_quota: 20
+    card_type: basic
+    image_context: "Apache Airflow"
+    levels:
+      1:
+        - concept: "what an orchestrator is for, and why not cron"
+        - concept: "DAGs, tasks and operators"
+        - build: "a first Airflow DAG with two tasks and a dependency"
+        - concept: "schedules and the logical date"
+        - command: "the Airflow CLI: dags list, dags trigger, tasks test and tasks clear"
+      2:
+        - concept: "catchup and backfills"
+        - concept: "retries, timeouts and trigger rules"
+        - build: "the TaskFlow API with @dag and @task"
+        - concept: "XCom, and why not to pass data through it"
+        - concept: "sensors and deferrable operators"
+        - concept: "connections and variables"
+      3:
+        - concept: "idempotent tasks"
+        - concept: "pools and concurrency limits"
+        - concept: "executors, the scheduler and the metadata database"
+        - concept: "MWAA: managed Airflow on AWS"
+        - concept: "Step Functions: state machines, retries and error handling"
+        - concept: "testing DAGs locally"
+      4:
+        - scenario: "a DAG that loaded yesterday's data twice after a rerun"
+        - scenario: "heavy code at the top of a DAG file slowing the scheduler"
+        - concept: "Airflow versus Step Functions versus EventBridge schedules"
 
-  - deck: Data Platform::13 Platform Operations
+  - deck: Data Platform::12 Streaming
     new_deck: true
     start: 2026-12-01
-    daily_quota: 15
-    card_type: detailed
+    daily_quota: 20
+    card_type: basic
+    image_context: "data streaming"
+    levels:
+      1:
+        - concept: "events and streams, versus batch files"
+        - concept: "Kafka: topics, partitions and offsets"
+        - concept: "producers, consumers and consumer groups"
+        - concept: "Kinesis Data Streams and shards"
+      2:
+        - concept: "ordering, and what a partition key decides"
+        - concept: "at-most-once, at-least-once and exactly-once delivery"
+        - concept: "Firehose: delivering a stream to S3"
+        - concept: "Lambda as a stream consumer"
+        - concept: "event time versus processing time"
+      3:
+        - concept: "windows and aggregations on a stream"
+        - concept: "schemas on a stream, and a schema registry"
+        - concept: "consumer lag, and alerting on it"
+        - concept: "Kinesis versus MSK"
+      4:
+        - scenario: "a poison message that blocks a consumer"
+        - scenario: "duplicate events after a consumer restart"
+        - scenario: "late events arriving after their window closed"
+
+  - deck: Data Platform::13 Warehouse
+    new_deck: true
+    start: 2026-12-05
+    daily_quota: 20
+    card_type: basic
+    image_context: "Amazon Redshift"
+    levels:
+      1:
+        - concept: "what a warehouse adds over a lake"
+        - concept: "Redshift: the leader node, compute nodes and slices"
+        - concept: "provisioned Redshift versus Redshift Serverless"
+        - build: "loading data with COPY from S3"
+      2:
+        - concept: "distribution styles"
+        - concept: "sort keys and zone maps"
+        - concept: "vacuum and analyze"
+        - concept: "Redshift Spectrum: querying the lake"
+        - concept: "materialized views"
+      3:
+        - concept: "workload management and concurrency scaling"
+        - concept: "dbt on a warehouse: environments and CI"
+        - concept: "semantic layers and metric definitions"
+        - concept: "serving BI tools, and reverse ETL"
+      4:
+        - scenario: "a slow join between two large tables"
+        - concept: "Redshift versus Athena versus Snowflake"
+        - concept: "keeping warehouse costs predictable"
+
+  - deck: Data Platform::14 Kubernetes & EKS
+    new_deck: true
+    start: 2026-12-09
+    daily_quota: 20
+    card_type: basic
+    image_context: "Kubernetes"
+    levels:
+      1:
+        - concept: "what Kubernetes adds over running containers yourself"
+        - concept: "pods, nodes and the cluster"
+        - command: "kubectl basics: get, describe and logs"
+        - build: "a first Deployment manifest"
+        - concept: "deployments and replicas"
+        - concept: "services: a stable address for a set of pods"
+      2:
+        - command: "kubectl apply, delete, exec and port-forward"
+        - concept: "configmaps and secrets"
+        - concept: "namespaces, labels and selectors"
+        - concept: "jobs and cronjobs for batch work"
+        - concept: "resource requests and limits"
+        - concept: "liveness, readiness and startup probes"
+      3:
+        - concept: "the control plane and the node components"
+        - concept: "rolling updates and rollbacks"
+        - concept: "persistent volumes and claims"
+        - concept: "EKS: managed node groups versus Fargate"
+        - concept: "IAM roles for service accounts"
+        - concept: "Helm charts"
+      4:
+        - scenario: "a pod in CrashLoopBackOff"
+        - scenario: "a pod stuck in Pending"
+        - scenario: "a container killed with OOMKilled"
+        - concept: "running Spark and Airflow on Kubernetes"
+
+  - deck: Data Platform::15 Platform Operations
+    new_deck: true
+    start: 2026-12-15
+    daily_quota: 20
+    card_type: basic
     image_context: "data platform"
-    topics:
-      - "observability for pipelines: logs, metrics and traces"
-      - alerting that pages on symptoms, not causes
-      - data quality in production, with tests in the pipeline
-      - "data observability: freshness, volume and schema drift"
-      - incident response and writing a postmortem
-      - "CI/CD for data: testing transformations before they ship"
-      - environments, and promoting a change from dev to prod
-      - "secrets management: Secrets Manager versus Parameter Store"
-      - PII, masking and column-level access
-      - governance, ownership and a data catalogue people use
-      - "cost attribution: tagging and finding what spends money"
-      - "disaster recovery: backups, RPO and RTO for data"
-      - "multi-account AWS setups: why and how"
-      - "system design: an ingestion pipeline from API to dashboard"
-      - "system design: a lakehouse for a mid-size company"
-      - explaining a platform you built, the way an interviewer wants to hear it
     instructions: >
-      Capstone. Tie the earlier decks together, and prefer scenarios and
-      trade-offs a senior engineer would discuss in a design interview.
+      Capstone. Tie the earlier decks together, and prefer the trade-offs a
+      senior engineer would discuss in a design interview.
+    levels:
+      1:
+        - concept: "observability: logs, metrics and traces"
+        - concept: "alerts that page on symptoms, not causes"
+        - concept: "environments: development, staging and production"
+      2:
+        - concept: "CI/CD for data: testing transformations before they ship"
+        - concept: "data quality tests inside the pipeline"
+        - concept: "data observability: freshness, volume and schema drift"
+        - concept: "PII, masking and column-level access"
+        - concept: "cost attribution with tags"
+      3:
+        - concept: "incident response and postmortems"
+        - concept: "backups, RPO and RTO for data"
+        - concept: "multi-account AWS setups"
+        - concept: "governance and ownership of datasets"
+      4:
+        - scenario: "system design: an ingestion pipeline from an API to a dashboard"
+        - scenario: "system design: a lakehouse for a mid-size company"
+        - scenario: "system design: near-real-time events into a warehouse"
+        - scenario: "explaining a platform you built, the way an interviewer wants to hear it"

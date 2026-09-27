@@ -31,10 +31,16 @@ def _model(card_type: str) -> genanki.Model:
     return genanki.Model(
         spec["model_id"], spec["name"],
         fields=[{"name": f} for f in spec["fields"]],
-        templates=[{"name": "Card 1", "qfmt": spec["template_front"], "afmt": spec["template_back"]}],
+        templates=[{"name": name, "qfmt": front, "afmt": back} for name, front, back in templates(spec)],
         css=spec["css"],
         **kwargs,
     )
+
+
+def templates(spec: dict) -> list[tuple[str, str, str]]:
+    """A card type's (name, front, back) templates: one card per note unless
+    the type asks for more, as `command` does."""
+    return spec.get("templates") or [("Card 1", spec["template_front"], spec["template_back"])]
 
 
 def _deck_id(name: str) -> int:
@@ -64,6 +70,8 @@ def with_picture(card_type: str, values: dict, picture: str) -> dict:
     sep = "<br>" if picture.startswith("<img") else ""
     if card_type == "detailed":
         values["Image"] = picture
+    elif card_type == "command":
+        values["Note"] = f"{values.get('Note', '')}{sep}{picture}"
     elif card_type == "cloze":
         # Not .lstrip("<br>"): that strips *characters*, and ate the first
         # letter of any hint beginning with b or r.

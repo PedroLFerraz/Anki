@@ -46,6 +46,49 @@ class GenerationRequest:
     prompt: str = ""
     # Free-text steer for a one-off run, from `ankigen run --prompt`.
     extra: str = ""
+    # For a topic from a deck's `levels`: the shape of its cards and how much
+    # the learner is assumed to know. None for a plain `topics` list.
+    kind: str | None = None
+    level: int | None = None
+    # A build request asks for one snippet (n=1) with this many parts hidden,
+    # each of which Anki shows as its own card.
+    parts: int = 0
+
+    @property
+    def cards(self) -> int:
+        """Anki cards this request should produce: gaps for a snippet, else notes."""
+        return self.parts or self.n
+
+
+def _shape(kind: str | None, n: int) -> dict:
+    """A request's size: n notes, or for a build topic one note with n gaps."""
+    return {"n": 1, "parts": n} if kind == "build" else {"n": n}
+
+
+# The note type each kind of card is filed as.
+KIND_NOTE = {"command": "command", "shortcut": "command", "concept": "basic",
+             "build": "cloze", "scenario": "detailed"}
+# What each level may assume. Level 1 is the one that matters most: without it
+# a model told the learner is "a data scientist" writes an interview question
+# about SIGTERM for someone who has never opened a terminal.
+LEVELS = {
+    1: "Level 1 of 4, basics: the learner has never used this. Everyday usage and "
+       "vocabulary only; no production, security or failure scenarios.",
+    2: "Level 2 of 4, how it works: the learner uses it day to day and now learns "
+       "what happens underneath.",
+    3: "Level 3 of 4, production: running it for real, where it fails, security "
+       "and performance.",
+    4: "Level 4 of 4, advanced: trade-offs and edge cases, the way an experienced "
+       "engineer would be asked in an interview.",
+}
+# Rules for every kind; each kind adds its own shape in prompts/kind_*.txt.
+KIND_RULES = [
+    "One fact per card. Short beats complete: a card should be answerable in a few seconds.",
+    "Use only words the learner has met at this level, and explain nothing the card "
+    "does not ask.",
+    "Be precise. If you are not certain something is correct, pick something else.",
+    "Use `backticks` for commands, keys, file names and code.",
+]
 
 
 # ------------------------------------------------------------ helpers
@@ -135,15 +178,32 @@ def render_prompt(req: GenerationRequest, profile: Profile, target: DeckTarget) 
             f"Write exactly {req.n} new cards on important concepts this deck does not "
             "cover yet. Prefer concepts a practitioner uses often over trivia."
         )
+    elif req.kind == "build":
+        task = (f'Write exactly {req.n} snippet about: "{req.topic}", with exactly '
+                f"{req.parts} parts hidden.")
+        if req.level:
+            task += f"\n{LEVELS[req.level]}"
     else:
         task = f'Write exactly {req.n} new cards about: "{req.topic}".'
+        if req.level:
+            task += f"\n{LEVELS[req.level]}"
 
     if getattr(req, "extra", ""):
         # What the person asked for on the command line, after the standing
         # instructions so it can override them.
         task += f"\n\nAlso, specifically for this request:\n{req.extra.strip()}"
 
-    rules = [
+    if req.kind:
+        rules = [*KIND_RULES, *style.rules]
+        contract = _load(f"kind_{req.kind}.txt").substitute(
+            picture_fields=', "visual": null, "image_query": ""' if wants_images else "")
+        if wants_images and req.kind in ("concept", "scenario"):
+            contract += "\n" + "\n\n".join((_load("picture_hint.txt").template.rstrip(),
+                                             _load("image_hint.txt").template.rstrip()))
+    else:
+        rules, contract = None, _format_contract(req.card_type, wants_images)
+
+    rules = rules or [
         "Each card tests ONE specific concept.",
         f"Answers are at most {style.max_answer_words} words.",
         "Be factually precise. If you are not certain a detail is correct, choose a "
@@ -164,7 +224,7 @@ def render_prompt(req: GenerationRequest, profile: Profile, target: DeckTarget) 
         examples=examples.strip() or "(no examples available — use a clear, concise style)",
         avoid=_bullets(req.avoid, "(nothing yet — this is a new subject)"),
         rules=_bullets(rules, ""),
-        format=_format_contract(req.card_type, wants_images),
+        format=contract,
     )
 
 
@@ -204,18 +264,23 @@ def ad_hoc_request(profile: Profile, notes: list[Note], run_date: date, deck: st
     style_pool = deck_notes or [n_ for n_ in notes
                                 if any(in_deck(n_.deck, t.deck) for t in profile.decks)]
     query = topic or deck
+    # A topic from the deck's curriculum keeps its kind and level; any other
+    # topic is written the deck's plain way.
+    kind, level = target.kind_of(" ".join(topic.split())) if topic else (None, None)
     req = GenerationRequest(
         request_id=hashlib.sha1(
             f"{run_date}|{deck}|ad_hoc|{topic}|{extra}".encode()
         ).hexdigest()[:12],
         deck=deck,
-        card_type=target.card_type,
-        n=n or min(target.daily_quota or 5, CARDS_PER_TOPIC),
+        card_type=KIND_NOTE[kind] if kind else target.card_type,
+        **_shape(kind, n or min(target.daily_quota or 5, CARDS_PER_TOPIC)),
         reason="topic" if topic else "gap",
         topic=topic or deck.split("::")[-1],
         style_examples=_style_examples(style_pool, profile.style.examples_per_prompt, rng),
         avoid=nearest(query, notes, AVOID_LIMIT),
         extra=extra,
+        kind=kind,
+        level=level,
     )
     req.prompt = render_prompt(req, profile, target)
     return [req]
@@ -225,11 +290,11 @@ def ad_hoc_request(profile: Profile, notes: list[Note], run_date: date, deck: st
 
 def build_requests(profile: Profile, notes: list[Note], run_date: date) -> list[GenerationRequest]:
     requests: list[GenerationRequest] = []
-    budget = profile.global_quota
+    budget = profile.budget_on(run_date)
     all_targeted = [n for n in notes if any(in_deck(n.deck, t.deck) for t in profile.decks)]
 
     for target in profile.decks:
-        quota = min(target.daily_quota, budget)
+        quota = min(target.quota_on(run_date), budget)
         if quota <= 0:
             continue
         # A phased deck outside its window is not studied at all that day,
@@ -247,14 +312,17 @@ def build_requests(profile: Profile, notes: list[Note], run_date: date) -> list[
 
         def add(reason: str, n: int, topic: str | None = None, focus: Note | None = None):
             query = focus.front if focus else (topic or target.deck)
+            kind, level = target.kind_of(topic) if reason == "topic" else (None, None)
             deck_reqs.append(GenerationRequest(
                 request_id=hashlib.sha1(
                     f"{run_date}|{target.deck}|{reason}|{topic}|{focus.note_id if focus else ''}".encode()
                 ).hexdigest()[:12],
                 deck=target.deck,
-                card_type=target.card_type,
-                n=n,
+                card_type=KIND_NOTE[kind] if kind else target.card_type,
+                **_shape(kind, n),
                 reason=reason,
+                kind=kind,
+                level=level,
                 topic=topic,
                 focus=f"Q: {focus.front}\nA: {focus.back}" if focus else None,
                 style_examples=_style_examples(style_pool, k, rng),
@@ -299,7 +367,7 @@ def build_requests(profile: Profile, notes: list[Note], run_date: date) -> list[
 
         for req in deck_reqs:
             req.prompt = render_prompt(req, profile, target)
-        budget -= sum(r.n for r in deck_reqs)
+        budget -= sum(r.cards for r in deck_reqs)
         requests.extend(deck_reqs)
         if budget <= 0:
             break
@@ -307,12 +375,14 @@ def build_requests(profile: Profile, notes: list[Note], run_date: date) -> list[
     return requests
 
 
-REQUEST_COLUMNS = ("run_date", "request_id", "deck", "topic", "card_type", "n", "reason", "focus", "prompt")
+REQUEST_COLUMNS = ("run_date", "request_id", "deck", "topic", "card_type", "n", "reason",
+                   "focus", "prompt", "kind", "level")
 
 
 def save_requests(wh, run_date: date, requests: list[GenerationRequest]) -> int:
     return wh.replace_partition("requests", run_date, REQUEST_COLUMNS, [
-        (run_date, r.request_id, r.deck, r.topic, r.card_type, r.n, r.reason, r.focus, r.prompt)
+        (run_date, r.request_id, r.deck, r.topic, r.card_type, r.n, r.reason, r.focus, r.prompt,
+         r.kind, r.level)
         for r in requests
     ])
 

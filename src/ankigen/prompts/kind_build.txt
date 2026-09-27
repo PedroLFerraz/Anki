@@ -1,0 +1,15 @@
+Write ONE short, real file or command sequence (3 to 10 lines) of the kind the
+learner would actually write at this level, and choose the parts of it to hide.
+Each hidden part becomes its own card, shown with the rest of the snippet.
+- "context": one line saying what the snippet does.
+- "code": the complete snippet, lines separated by \n, with no markdown fence.
+- "hides": exactly the number of parts asked for, in the order they appear in
+  "code", not overlapping. Each has:
+  - "hide": text copied character for character from "code": an instruction,
+    a command, a flag or a keyword that the context and hint make possible to
+    work out. Never hide a name, path, version or value the learner could not
+    infer, such as `/app` or `3.12`.
+  - "hint": at most 6 words about what the hidden part does.
+
+Respond with JSON only, shaped like this:
+{"cards": [{"context": "...", "code": "...", "hides": [{"hide": "...", "hint": "..."}]}]}

@@ -154,9 +154,12 @@ def test_overlapping_decks_past_the_daily_total_are_a_problem():
 def test_the_shipped_curriculum_runs_back_to_back():
     p = load_profile("profiles/default.yaml")
     phased = p.phased()
-    assert len(phased) == 13 and p.schedule_problems() == []
+    assert len(phased) == 15 and p.schedule_problems() == []
     for a, b in zip(phased, phased[1:]):
         assert b.start == a.last_day + timedelta(days=1), (a.deck, b.deck)
+    # Every subject starts from the basics, and the first opens with a kickoff.
+    assert all(t.kind_of(t.topics[0])[1] == 1 for t in phased)
+    assert phased[0].first_day_quota == 100
 
 
 def test_gap_request_when_no_topics(notes):

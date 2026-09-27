@@ -186,10 +186,11 @@ def _notetype(col, card_type: str):
         nt["type"] = 1
     for fieldname in spec["fields"]:
         col.models.add_field(nt, col.models.new_field(fieldname))
-    template = col.models.new_template("Card 1")
-    template["qfmt"] = spec["template_front"]
-    template["afmt"] = spec["template_back"]
-    col.models.add_template(nt, template)
+    from ankigen.export import templates
+    for tname, front, back in templates(spec):
+        template = col.models.new_template(tname)
+        template["qfmt"], template["afmt"] = front, back
+        col.models.add_template(nt, template)
     nt["css"] = spec["css"]
     col.models.add(nt)
     return col.models.by_name(name)
@@ -269,7 +270,7 @@ def _picture(card: dict, media_dir: Path) -> str | None:
 # program has put there: drawn visuals, inline images, and files named the way
 # images.py names them — which is what the first pushed notes carry, pointing
 # at files that never reached AnkiWeb.
-PICTURE_FIELD = {"detailed": "Image", "basic": "Answer", "cloze": "Extra"}
+PICTURE_FIELD = {"detailed": "Image", "basic": "Answer", "cloze": "Extra", "command": "Note"}
 _OUR_PICTURE = re.compile(
     r'(?:<br>)?<img src="(?:data:image/[a-z]+;base64,[A-Za-z0-9+/=]+|[a-z0-9_]+_[0-9a-f]{8}\.jpg)">'
     r'|<div class="ankigen-visual"[^>]*>.*?</div>',

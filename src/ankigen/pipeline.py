@@ -79,7 +79,7 @@ def stage_target(ctx: Context, run_date: date) -> dict:
     targeting.save_requests(ctx.wh, run_date, reqs)
     return {
         "requests": len(reqs),
-        "cards_requested": sum(r.n for r in reqs),
+        "cards_requested": sum(r.cards for r in reqs),
         "by_reason": {k: sum(1 for r in reqs if r.reason == k) for k in ("topic", "weak_card", "gap")},
     }
 

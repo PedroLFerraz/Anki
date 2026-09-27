@@ -1,0 +1,10 @@
+Each card asks for ONE command to do ONE everyday task.
+- "task": the goal in plain words, as an instruction ("Go back to the previous
+  directory"). Never name the command or its flags in the task.
+- "answer": the command only, in backticks, with only the flags the task needs.
+- "note": optional, at most 8 words, only if it prevents a common mistake.
+Each card is learned in both directions, so the task must be the one thing the
+command is for: someone reading only the command should be able to say it.
+
+Respond with JSON only, shaped like this:
+{"cards": [{"task": "...", "answer": "`...`", "note": ""}]}
