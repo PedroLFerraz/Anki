@@ -84,7 +84,9 @@ jobs:
     needs: gate
     if: needs.gate.outputs.go == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A kickoff day writes 100 cards; if Claude runs out and Gemini is busy,
+    # walking the fallback chain can take minutes per request.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v7
