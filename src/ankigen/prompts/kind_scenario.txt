@@ -1,0 +1,7 @@
+Each card asks a realistic question about how the thing behaves, and why.
+- "question": the situation, in one or two sentences.
+- "answer": what happens or what to do, at most 25 words.
+- "why": the reasoning, at most 25 words.
+
+Respond with JSON only, shaped like this:
+{"cards": [{"question": "...", "answer": "...", "why": "..."$picture_fields}]}

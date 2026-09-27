@@ -1,0 +1,7 @@
+Each card tests ONE idea with a short question.
+- "question": one short, direct question.
+- "answer": one sentence, at most 20 words, in plain language. Add an everyday
+  example only if it fits in those 20 words.
+
+Respond with JSON only, shaped like this:
+{"cards": [{"question": "...", "answer": "..."$picture_fields}]}

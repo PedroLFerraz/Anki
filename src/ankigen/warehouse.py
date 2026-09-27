@@ -60,7 +60,9 @@ CREATE TABLE IF NOT EXISTS requests (
     n           INTEGER NOT NULL,
     reason      VARCHAR NOT NULL,
     focus       VARCHAR,
-    prompt      VARCHAR NOT NULL
+    prompt      VARCHAR NOT NULL,
+    kind        VARCHAR,
+    level       INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS generated_cards (
@@ -182,6 +184,8 @@ class Warehouse:
         self.con.execute(
             "ALTER TABLE IF EXISTS generated_cards ADD COLUMN IF NOT EXISTS refill BOOLEAN"
         )
+        for column in ("kind VARCHAR", "level INTEGER"):
+            self.con.execute(f"ALTER TABLE IF EXISTS requests ADD COLUMN IF NOT EXISTS {column}")
         self.con.execute(SCHEMA)
 
     def close(self) -> None:

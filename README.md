@@ -84,6 +84,34 @@ decks:
     topics: [idempotent tasks and safe backfills]
 ```
 
+A subject can also be a **curriculum**: a `start:` date, levels from 1 (never
+used it) to 4 (interview), and a *kind* per topic that decides what its cards
+look like. Short cards for the basics, and the long "why" cards only where they
+belong:
+
+```yaml
+  - deck: Data Platform::01 Linux
+    start: 2026-09-28
+    first_day_quota: 100            # a kickoff day, then daily_quota
+    daily_quota: 20
+    levels:
+      1:
+        - command: "moving around: pwd, cd, ls"           # task -> `cd -`, and back
+        - shortcut: "command history: Ctrl+R and !!"      # task -> `Ctrl+R`, and back
+        - concept: "absolute versus relative paths"       # one-sentence answer
+      2:
+        - build: "a first bash script"                    # one file, several gaps
+      4:
+        - scenario: "a full disk with files still open"   # situation, answer, why
+```
+
+| Kind | Note type | The card |
+|---|---|---|
+| `command`, `shortcut` | AnkiGen Command | A task and its command or keys. Two cards: task to command, and command to what it does. |
+| `concept` | AnkiGen Basic | A short question, an answer of one sentence. |
+| `build` | AnkiGen Cloze | One real file or script in a code block, with a gap per part, and a card per gap. |
+| `scenario` | AnkiGen Detailed | A situation, what happens, and why. |
+
 Every generation prompt is built from:
 
 - your learner profile and style rules;

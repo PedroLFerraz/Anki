@@ -155,8 +155,64 @@ CLOZE = {
 }""",
 }
 
+_CODE_CSS = """
+code {
+  font-family: Menlo, Consolas, monospace;
+  background: rgba(127, 143, 166, .18);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+pre {
+  text-align: left;
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  background: rgba(127, 143, 166, .12);
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 16px;
+  line-height: 1.45;
+}
+pre code { background: none; padding: 0; }"""
+
+# A command or a shortcut, learned both ways: the task asks for the command,
+# and the command asks what it does, which is how you meet one in someone
+# else's script. One note, two cards.
+COMMAND = {
+    "name": "command",
+    "model_id": 1607392324,
+    "fields": ["Task", "Command", "Note"],
+    "templates": [
+        ("Task to command",
+         '<div class="task">{{Task}}</div>',
+         '<div class="task">{{Task}}</div><hr id="answer">'
+         '<div class="command">{{Command}}</div>'
+         '{{#Note}}<div class="note">{{Note}}</div>{{/Note}}'),
+        ("Command to task",
+         '<div class="command">{{Command}}</div><div class="ask">What does it do?</div>',
+         '<div class="command">{{Command}}</div><hr id="answer">'
+         '<div class="task">{{Task}}</div>'
+         '{{#Note}}<div class="note">{{Note}}</div>{{/Note}}'),
+    ],
+    "css": """.card {
+  font-family: arial;
+  font-size: 20px;
+  text-align: center;
+  color: #e0e0e0;
+  background-color: #1a1a2e;
+  line-height: 1.5;
+}
+.command { font-size: 24px; margin: 8px 0; }
+.ask, .note { font-size: 15px; color: #9aa5b8; margin-top: 10px; }""" + _CODE_CSS,
+}
+COMMAND["template_front"], COMMAND["template_back"] = COMMAND["templates"][0][1:]
+CLOZE["css"] += _CODE_CSS
+BASIC["css"] += _CODE_CSS
+DETAILED["css"] += _CODE_CSS
+
 CARD_TYPES = {
     "basic": BASIC,
+    "command": COMMAND,
     "detailed": DETAILED,
     "visual": VISUAL,
     "cloze": CLOZE,

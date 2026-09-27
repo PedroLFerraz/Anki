@@ -7,6 +7,7 @@ model or changes which cards exist.
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import logging
 import re
@@ -39,6 +40,15 @@ def clean_field(text: str) -> str:
     return text.strip("*").strip()
 
 
+def html_text(text: str) -> str:
+    """Text as it goes into a note field: escaped, with `backticks` as code.
+
+    Anki renders fields as HTML. Unescaped, `journalctl -u <service-name> -f`
+    reached phones as `journalctl -u -f`: the placeholder was read as a tag.
+    """
+    return re.sub(r"`([^`\n]+)`", r"<code>\1</code>", html.escape(str(text), quote=False))
+
+
 def fix_cloze_syntax(text: str) -> str:
     """Repair the cloze markup models commonly get wrong."""
     text = re.sub(r"(?<!\{)\{(c\d+::.*?)\}(?!\})", r"{{\1}}", text)   # {c1::x}   -> {{c1::x}}
@@ -61,7 +71,91 @@ def image_query(item: dict) -> str:
     return q if 3 <= len(q) <= 80 else ""
 
 
-def parse_cards(card_type: str, data: dict) -> list[Card]:
+def _hideable(hide: str, code: str) -> bool:
+    """Whether `hide` can become a cloze in `code`: present, and free of the
+    `::` and `}}` that would end Anki's cloze markup early."""
+    return bool(hide.strip()) and hide in code and "::" not in hide and "}}" not in hide
+
+
+def parse_kind(kind: str, data: dict) -> list[Card]:
+    """Cards of one kind (see prompts/kind_*.txt), as the note types they are
+    filed under. `front` and `back` stay plain text for the checker and dedup;
+    the fields are HTML."""
+    raw = data.get("cards", []) if isinstance(data, dict) else []
+    cards: list[Card] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        if kind in ("command", "shortcut"):
+            task, answer = clean_field(item.get("task", "")), clean_field(item.get("answer", ""))
+            note = clean_field(item.get("note", ""))
+            if len(task) < 5 or not answer:
+                logger.warning("Skipping %s card without a task and answer: %r", kind, task[:60])
+                continue
+            if "`" not in answer:
+                answer = f"`{answer}`"
+            cards.append(Card(task, f"{answer} {note}".strip(), {
+                "Task": html_text(task), "Command": html_text(answer), "Note": html_text(note)}))
+        elif kind == "concept":
+            q, a = clean_field(item.get("question", "")), clean_field(item.get("answer", ""))
+            if len(q) < 5 or len(a) < 2:
+                logger.warning("Skipping concept card: Q=%r A=%r", q[:60], a[:40])
+                continue
+            cards.append(Card(q, a, {"Question": html_text(q), "Answer": html_text(a)},
+                              image_query(item), visuals.parse(item.get("visual"))))
+        elif kind == "scenario":
+            q, a = clean_field(item.get("question", "")), clean_field(item.get("answer", ""))
+            why = clean_field(item.get("why", ""))
+            if len(q) < 5 or len(a) < 2:
+                logger.warning("Skipping scenario card: Q=%r A=%r", q[:60], a[:40])
+                continue
+            cards.append(Card(q, a, {"Question": html_text(q), "Summary": html_text(a),
+                                     "Explanation": html_text(why), "Image": "", "Reference": ""},
+                              image_query(item), visuals.parse(item.get("visual"))))
+        elif kind == "build":
+            card = _build_card(item)
+            if card:
+                cards.append(card)
+    return cards
+
+
+def _build_card(item: dict) -> Card | None:
+    """One snippet as one cloze note, a gap per hidden part: Anki makes a card
+    of each gap and spaces them out. Written as separate notes, the same file
+    five times over read to dedup as five copies of one card, and it kept one.
+    """
+    context = clean_field(item.get("context", ""))
+    code = re.sub(r"^```\w*\n|\n?```$", "", str(item.get("code", "")).strip("\n"))
+    hides = item.get("hides")
+    if not isinstance(hides, list):          # the older shape: one part per card
+        hides = [{"hide": item.get("hide", ""), "hint": item.get("hint", "")}]
+    text, front, answers, pos = [], [], [], 0
+    for h in hides:
+        hide = str(h.get("hide", "")).strip() if isinstance(h, dict) else ""
+        at = code.find(hide, pos) if hide else -1
+        if at < 0 or not _hideable(hide, code):
+            logger.warning("Skipping a hidden part that is not in its code: %r", hide[:60])
+            continue
+        hint = clean_field(h.get("hint", "")).replace("::", ":").replace("}}", "")
+        n = len(answers) + 1
+        text += [html.escape(code[pos:at], quote=False),
+                 f"{{{{c{n}::{html.escape(hide, quote=False)}"
+                 + (f"::{html.escape(hint, quote=False)}" if hint else "") + "}}"]
+        front += [code[pos:at], f"[{n}]"]
+        answers.append(f"[{n}] {hide}")
+        pos = at + len(hide)
+    if not answers:
+        logger.warning("Skipping build card with nothing hidden: %r", context[:60])
+        return None
+    text.append(html.escape(code[pos:], quote=False))
+    front.append(code[pos:])
+    return Card(f"{context}\n{''.join(front)}", "; ".join(answers), {
+        "Text": f"{html_text(context)}<pre><code>{''.join(text)}</code></pre>", "Extra": ""})
+
+
+def parse_cards(card_type: str, data: dict, kind: str | None = None) -> list[Card]:
+    if kind:
+        return parse_kind(kind, data)
     raw = data.get("cards", []) if isinstance(data, dict) else []
     cards: list[Card] = []
     for item in raw if isinstance(raw, list) else []:
@@ -75,7 +169,8 @@ def parse_cards(card_type: str, data: dict) -> list[Card]:
                 logger.warning("Skipping cloze without a valid deletion: %r", text[:60])
                 continue
             plain = CLOZE_PLAIN.sub(r"\1", text)
-            cards.append(Card(plain, text, {"Text": text, "Extra": extra}, image_query(item),
+            cards.append(Card(plain, text, {"Text": html_text(text), "Extra": html_text(extra)},
+                              image_query(item),
                               visuals.parse(item.get("visual"))))
 
         elif card_type == "detailed":
@@ -87,7 +182,8 @@ def parse_cards(card_type: str, data: dict) -> list[Card]:
                 logger.warning("Skipping low-quality detailed card: %r", q[:60])
                 continue
             cards.append(Card(q, summary, {
-                "Question": q, "Summary": summary, "Explanation": explanation or summary,
+                "Question": html_text(q), "Summary": html_text(summary),
+                "Explanation": html_text(explanation or summary),
                 "Image": "", "Reference": "",
             }, image_query(item), visuals.parse(item.get("visual"))))
 
@@ -97,7 +193,8 @@ def parse_cards(card_type: str, data: dict) -> list[Card]:
             if len(q) < 5 or len(a) < 2:
                 logger.warning("Skipping low-quality card: Q=%r A=%r", q[:60], a[:40])
                 continue
-            cards.append(Card(q, a, {"Question": q, "Answer": a}, image_query(item),
+            cards.append(Card(q, a, {"Question": html_text(q), "Answer": html_text(a)},
+                              image_query(item),
                               visuals.parse(item.get("visual"))))
     return cards
 
@@ -114,7 +211,7 @@ def generate_for_request(req: dict) -> tuple[list[Card], llm.LLMResult | None, i
         result = llm.call_json(prompt)
         p_tok += result.prompt_tokens
         c_tok += result.completion_tokens
-        for card in parse_cards(req["card_type"], result.data):
+        for card in parse_cards(req["card_type"], result.data, req.get("kind")):
             if card.front.lower() not in {c.front.lower() for c in cards}:
                 cards.append(card)
         if len(cards) >= want:

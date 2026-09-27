@@ -1,0 +1,9 @@
+Each card asks for ONE keyboard shortcut or shell trick for ONE everyday task.
+- "task": what you want to do, in plain words, never naming the keys.
+- "answer": the keys or the trick only, in backticks, e.g. `Ctrl+R`.
+- "note": optional, at most 8 words.
+Each card is learned in both directions, so the task must be the one thing the
+shortcut is for.
+
+Respond with JSON only, shaped like this:
+{"cards": [{"task": "...", "answer": "`...`", "note": ""}]}
