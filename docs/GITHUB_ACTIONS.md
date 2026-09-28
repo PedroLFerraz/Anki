@@ -63,9 +63,18 @@ the first one already succeeded.
 Everything below works from the GitHub app: Actions, pick the workflow, then
 **Run workflow**.
 
+**The next day of the curriculum, now.** *daily cards* with every field
+blank. Each run writes the day after the last one in your collection, so this
+adds tomorrow's cards today, and the scheduled run then writes the day after
+that: nothing is repeated, nothing skipped, and every later deck moves up a day.
+It is how to go faster than one day a day, as often as you can keep up with.
+The run's summary names the day it wrote, which is also the cards' tag
+(`tag:ankigen::run_<day>`); `added:1` in Anki finds everything added today.
+
 **More cards on one subject, now.** *daily cards* with **deck** set (and
 optionally **topic**, **prompt**, **count**) writes for that deck instead of
-the day's plan. The cards reach your phone on its next sync. The same thing
+the day's plan. The cards reach your phone on its next sync. They are not a
+day of the curriculum and do not move it along. The same thing
 locally:
 
 ```bash

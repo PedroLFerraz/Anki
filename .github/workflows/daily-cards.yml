@@ -42,7 +42,7 @@ on:
         required: false
         type: string
       run_date:
-        description: "Date to generate for (YYYY-MM-DD). Blank means today."
+        description: "Curriculum day to (re)do, YYYY-MM-DD. Blank writes the next one."
         required: false
         type: string
       stages:
@@ -187,11 +187,28 @@ jobs:
           IN_COUNT: ${{ inputs.count }}
           IN_STAGES: ${{ inputs.stages }}
         run: |
+          python -m ankigen pull
+
+          # The curriculum is a queue: a plan run writes the day after the last
+          # one in the collection, so a run by hand adds the next day rather
+          # than redoing today's, and the scheduled run carries on after it.
+          # The day is settled once here, and run, push and the summary all
+          # use it. One deck by hand is not a day of the curriculum.
+          if [ -n "$IN_RUN_DATE" ]; then
+            day="$IN_RUN_DATE"
+          elif [ -n "$IN_DECK" ]; then
+            day=$(date -u +%F)
+          elif [ -n "$IN_STAGES" ]; then
+            echo "::error::Redoing stages needs run_date: the day to redo."
+            exit 1
+          else
+            day=$(python -m ankigen next)
+          fi
+          echo "RUN_DATE=$day" >> "$GITHUB_ENV"
+
           # Built up rather than branched: the inputs are independent, and the
           # CLI already rejects a topic or prompt with no deck.
-          when=()
-          [ -n "$IN_RUN_DATE" ] && when+=(--date "$IN_RUN_DATE")
-          args=("${when[@]}")
+          args=(--date "$day")
           [ -n "$IN_DECK" ]   && args+=(--deck "$IN_DECK")
           [ -n "$IN_TOPIC" ]  && args+=(--topic "$IN_TOPIC")
           [ -n "$IN_PROMPT" ] && args+=(--prompt "$IN_PROMPT")
@@ -203,12 +220,11 @@ jobs:
             [ -n "$stage" ] && args+=(--stage "$stage")
           done
 
-          python -m ankigen pull
           echo "ankigen run ${args[*]}"
           python -m ankigen run "${args[@]}"
           # push syncs down again first, so anything reviewed while the run was
           # working is merged before the new cards go up.
-          python -m ankigen push "${when[@]}"
+          python -m ankigen push --date "$day"
 
       # The run's page on GitHub, which is what the app on a phone shows:
       # what was written, what got a picture, what was dropped and why.
@@ -218,9 +234,8 @@ jobs:
         env:
           DATA_DIR: data
           ANKIGEN_PROFILE: profiles/default.yaml
-          IN_RUN_DATE: ${{ inputs.run_date }}
         run: |
-          python -m ankigen summary ${IN_RUN_DATE:+--date "$IN_RUN_DATE"} >> "$GITHUB_STEP_SUMMARY"
+          python -m ankigen summary ${RUN_DATE:+--date "$RUN_DATE"} >> "$GITHUB_STEP_SUMMARY"
 
       # Only on success: a failed run's working copy may be empty or
       # half-synced, and caching that poisons every run after it.
@@ -242,7 +257,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: cards-${{ inputs.run_date || 'today' }}
+          name: cards-${{ env.RUN_DATE || 'unknown' }}
           path: |
             data/out/**/*.apkg
             data/out/**/run_report.json

@@ -53,6 +53,8 @@ class GenerationRequest:
     # A build request asks for one snippet (n=1) with this many parts hidden,
     # each of which Anki shows as its own card.
     parts: int = 0
+    # Asked for by hand for one deck: not a day of the curriculum.
+    ad_hoc: bool = False
 
     @property
     def cards(self) -> int:
@@ -281,6 +283,7 @@ def ad_hoc_request(profile: Profile, notes: list[Note], run_date: date, deck: st
         extra=extra,
         kind=kind,
         level=level,
+        ad_hoc=True,
     )
     req.prompt = render_prompt(req, profile, target)
     return [req]
@@ -376,13 +379,13 @@ def build_requests(profile: Profile, notes: list[Note], run_date: date) -> list[
 
 
 REQUEST_COLUMNS = ("run_date", "request_id", "deck", "topic", "card_type", "n", "reason",
-                   "focus", "prompt", "kind", "level")
+                   "focus", "prompt", "kind", "level", "ad_hoc")
 
 
 def save_requests(wh, run_date: date, requests: list[GenerationRequest]) -> int:
     return wh.replace_partition("requests", run_date, REQUEST_COLUMNS, [
         (run_date, r.request_id, r.deck, r.topic, r.card_type, r.n, r.reason, r.focus, r.prompt,
-         r.kind, r.level)
+         r.kind, r.level, r.ad_hoc)
         for r in requests
     ])
 
