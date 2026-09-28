@@ -235,11 +235,13 @@ def test_a_plan_run_without_a_date_writes_the_next_day(ctx, cfg, cli_ctx):
     assert days == {nxt}
 
 
-def test_redoing_stages_needs_the_day(cli_ctx):
+def test_redoing_stages_needs_the_day(ctx, cli_ctx):
     from typer.testing import CliRunner
 
+    # The message itself is boxed and coloured by rich, so it is not matched.
     refused = CliRunner().invoke(cli_ctx, ["run", "--stage", "images", "--stage", "export"])
-    assert refused.exit_code != 0 and "--date" in refused.output
+    assert refused.exit_code == 2
+    assert not ctx.wh.scalar("SELECT COUNT(*) FROM pipeline_runs")
 
 
 def test_cards_for_one_deck_by_hand_are_marked(ctx, fake_llm):
