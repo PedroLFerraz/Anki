@@ -137,7 +137,12 @@ For each deck in the profile, up to its `daily_quota`:
    nothing before that day, then its topics once, in order from the first,
    `daily_quota / 5` a day, then nothing, weak cards included. Decks with
    start dates run one after another; `ankigen validate` prints the timeline
-   and fails if two running at once want more than `global_quota`.
+   and fails if two running at once want more than `global_quota`. Those
+   dates are the curriculum's days, not the calendar's: a plan run with no
+   date writes the day after the latest `ankigen::run_<date>` tag in the
+   collection (`ankigen next`), so extra runs move the curriculum ahead and
+   the schedule carries on from there. Cards for one deck by hand are tagged
+   `ankigen::ad-hoc` as well and do not count.
 3. **No topics?** It asks the model to find what the deck is missing.
 
 Each prompt is built from the `prompts/generate.txt` template and contains:

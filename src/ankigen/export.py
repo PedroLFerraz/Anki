@@ -20,6 +20,7 @@ import genanki
 
 from ankigen.card_types import CARD_TYPES
 from ankigen.dedup import NEAR_DUP
+from ankigen.ingest import AD_HOC_TAG
 from ankigen.verify import UNVERIFIED
 
 logger = logging.getLogger(__name__)
@@ -109,6 +110,8 @@ def build_package(run_date: date, cards: list[dict], profile=None,
             logger.warning("Image %s is missing from %s; exporting without it", filename, media_dir)
 
         tags = ["ankigen", f"ankigen::run_{run_date}", f"ankigen::{c['request_reason']}"]
+        if c.get("ad_hoc"):
+            tags.append(AD_HOC_TAG)
         if (c.get("verify_reason") or "").startswith(UNVERIFIED):
             tags.append("ankigen::unverified")
         if (c.get("dup_reason") or "").startswith(NEAR_DUP):

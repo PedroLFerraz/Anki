@@ -319,6 +319,45 @@ def read_notes(collection: str | Path) -> list[Note]:
         con.close()
 
 
+# Every card a plan run writes is tagged with the curriculum day it belongs to.
+# Cards written for one deck by hand carry the ad-hoc tag as well, and are not
+# a day of the curriculum: counting them would skip the day they share a date
+# with.
+RUN_TAG = re.compile(r"(?<!\S)ankigen::run_(\d{4}-\d{2}-\d{2})(?!\S)", re.IGNORECASE)
+AD_HOC_TAG = "ankigen::ad-hoc"
+
+
+def run_dates(collection: str | Path, raw_dir: str | Path) -> set[date]:
+    """The curriculum days the collection already has cards for."""
+    snap = snapshot(collection, Path(raw_dir) / "next" / "collection.anki2")
+    con = sqlite3.connect(f"{snap.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        rows = con.execute("SELECT tags FROM notes WHERE tags LIKE '%ankigen::run%'").fetchall()
+    finally:
+        con.close()
+    days = set()
+    for (tags,) in rows:
+        if AD_HOC_TAG in (tags or "").lower().split():
+            continue
+        for match in RUN_TAG.finditer(tags or ""):
+            with suppress(ValueError):
+                days.add(date.fromisoformat(match.group(1)))
+    return days
+
+
+def next_run_date(collection: str | Path, raw_dir: str | Path, today: date) -> date:
+    """The curriculum day a plan run writes: the one after the last day the
+    collection has cards for, whenever the run happens.
+
+    The curriculum is a queue, not a calendar. A run by hand takes the next day
+    rather than redoing today's, so the scheduled run after it carries on from
+    there instead of repeating it, and every deck after the current one moves
+    up. A day the schedule missed is written by the next run, not skipped.
+    """
+    done = run_dates(collection, raw_dir)
+    return max(done) + timedelta(days=1) if done else today
+
+
 def read_revlog(collection: str | Path, after_id: int = 0) -> list[tuple]:
     con = sqlite3.connect(f"{Path(collection).resolve().as_uri()}?mode=ro", uri=True)
     try:

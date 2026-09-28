@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS requests (
     focus       VARCHAR,
     prompt      VARCHAR NOT NULL,
     kind        VARCHAR,
-    level       INTEGER
+    level       INTEGER,
+    ad_hoc      BOOLEAN
 );
 
 CREATE TABLE IF NOT EXISTS generated_cards (
@@ -140,7 +141,7 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
 CREATE OR REPLACE VIEW card_outcomes AS
 SELECT
     g.run_date, g.card_uid, g.request_id, g.deck, g.card_type, g.front, g.back,
-    g.fields_json, r.reason AS request_reason, r.topic,
+    g.fields_json, r.reason AS request_reason, r.topic, COALESCE(r.ad_hoc, FALSE) AS ad_hoc,
     g.image_query, g.visual_json, COALESCE(g.refill, FALSE) AS refill,
     v.passed AS verify_passed, v.score AS verify_score, v.reason AS verify_reason,
     v.visual_ok,
@@ -184,7 +185,7 @@ class Warehouse:
         self.con.execute(
             "ALTER TABLE IF EXISTS generated_cards ADD COLUMN IF NOT EXISTS refill BOOLEAN"
         )
-        for column in ("kind VARCHAR", "level INTEGER"):
+        for column in ("kind VARCHAR", "level INTEGER", "ad_hoc BOOLEAN"):
             self.con.execute(f"ALTER TABLE IF EXISTS requests ADD COLUMN IF NOT EXISTS {column}")
         self.con.execute(SCHEMA)
 

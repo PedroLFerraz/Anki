@@ -87,7 +87,9 @@ decks:
 A subject can also be a **curriculum**: a `start:` date, levels from 1 (never
 used it) to 4 (interview), and a *kind* per topic that decides what its cards
 look like. Short cards for the basics, and the long "why" cards only where they
-belong:
+belong. The dates are the curriculum's own days: each run writes the day after
+the last one in your collection, so the schedule does one a day and running it
+again by hand does the next, and everything after it moves up.
 
 ```yaml
   - deck: Data Platform::01 Linux

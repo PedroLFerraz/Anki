@@ -10,8 +10,9 @@ from typing import Optional
 
 import typer
 
-from ankigen import pipeline
+from ankigen import ingest, pipeline
 from ankigen.config import NATIVE_PROVIDERS, PROVIDERS, settings
+from ankigen.ingest import AD_HOC_TAG
 
 app = typer.Typer(
     add_completion=False,
@@ -52,13 +53,24 @@ def _date(value: Optional[str]) -> date:
         raise typer.BadParameter(f"Expected YYYY-MM-DD, got {value!r}")
 
 
+def _plan_date(value: Optional[str], ctx) -> date:
+    """The day a plan run writes: the one given, else the curriculum's next."""
+    if value:
+        return _date(value)
+    return ingest.next_run_date(ctx.settings.anki_collection_path, ctx.raw_dir, date.today())
+
+
 DateOpt = typer.Option(None, "--date", "-d", help="Run date, YYYY-MM-DD. Defaults to today.")
+PlanDateOpt = typer.Option(
+    None, "--date", "-d",
+    help="Curriculum day, YYYY-MM-DD. Defaults to the day after the last one in the "
+         "collection, so running again writes the next day rather than redoing this one.")
 ProfileOpt = typer.Option(None, "--profile", "-p", help="Profile YAML. Defaults to ANKIGEN_PROFILE.")
 
 
 @app.command()
 def run(
-    run_date: Optional[str] = DateOpt,
+    run_date: Optional[str] = PlanDateOpt,
     profile: Optional[str] = ProfileOpt,
     stage: Optional[list[str]] = typer.Option(
         None, "--stage", "-s", help=f"Run only these stages: {', '.join(pipeline.STAGES)}."
@@ -79,11 +91,20 @@ def run(
     if not deck and (topic or prompt or count):
         raise typer.BadParameter("--topic, --prompt and --count only make sense with --deck.")
 
-    d = _date(run_date)
+    if stage and "target" not in stage and not run_date and not dry_run:
+        # Without a plan there is nothing new to write; this redoes a day that
+        # has run, and which one is not something to guess.
+        raise typer.BadParameter("Running only later stages redoes a day: give it with --date.")
+
     ctx = pipeline.open_context(profile)
-    if deck:
-        ctx.ad_hoc = pipeline.AdHoc(deck=deck, topic=topic or "", extra=prompt or "", n=count)
     try:
+        if deck:
+            # One deck by hand is not a day of the curriculum, so it takes
+            # today's date and leaves the curriculum's next day where it was.
+            d = _date(run_date)
+            ctx.ad_hoc = pipeline.AdHoc(deck=deck, topic=topic or "", extra=prompt or "", n=count)
+        else:
+            d = _plan_date(run_date, ctx)
         if dry_run and _has_cards(ctx, d):
             raise typer.BadParameter(
                 f"{d} already has cards, and planning it again would hide them from "
@@ -101,6 +122,7 @@ def run(
         exp = results["export"]
         typer.echo(f"\n{exp['kept']} card(s) kept for {d}.")
         typer.echo(f"  package: {exp['apkg'] or '(none: nothing kept)'}")
+        typer.echo(f"  to Anki: ankigen push -d {d}")
     if "report" in results:
         typer.echo(f"  report:  {results['report']['report']}  (ankigen report -d {d})")
 
@@ -111,7 +133,7 @@ def _has_cards(ctx, d: date) -> bool:
 
 @app.command()
 def plan(
-    run_date: Optional[str] = DateOpt,
+    run_date: Optional[str] = PlanDateOpt,
     profile: Optional[str] = ProfileOpt,
     prompts: int = typer.Option(1, "--prompts", help="How many full prompts to print (0 for none)."),
 ):
@@ -121,9 +143,9 @@ def plan(
     than planning it again: a fresh plan replaces the day's requests, and the
     cards generated from the old ones then drop out of `report` and `push`.
     """
-    d = _date(run_date)
     ctx = pipeline.open_context(profile)
     try:
+        d = _plan_date(run_date, ctx)
         ran = _has_cards(ctx, d)
         if not ran:
             pipeline.run(ctx, d, dry_run=True)
@@ -141,6 +163,20 @@ def plan(
     for r in reqs[:prompts]:
         typer.echo(f"\n{'=' * 72}\nPROMPT  {r['deck']} / {r['topic'] or r['reason']}\n{'=' * 72}")
         typer.echo(r["prompt"])
+
+
+@app.command("next")
+def next_day():
+    """Print the curriculum day the next plan run writes, YYYY-MM-DD.
+
+    The day after the last one the collection has cards for, whenever the run
+    happens: the daily workflow asks this once, then runs and pushes that day.
+    """
+    ctx = pipeline.open_context()
+    try:
+        typer.echo(_plan_date(None, ctx))
+    finally:
+        ctx.wh.close()
 
 
 @app.command()
@@ -296,6 +332,8 @@ def push(
 
     for card in cards:
         card["tags"] = ["ankigen", f"ankigen::run_{d}", f"ankigen::{card['request_reason']}"]
+        if card.get("ad_hoc"):
+            card["tags"].append(AD_HOC_TAG)
         if (card.get("dup_reason") or "").startswith("near-dup"):
             card["tags"].append("ankigen::near-dup")
 

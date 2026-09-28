@@ -45,6 +45,10 @@ inbox: ""
 # deck starts the day after. The first deck's first day is a kickoff of
 # first_day_quota cards. `ankigen validate` prints when each deck runs.
 #
+# The dates are the curriculum's days, not the calendar's: each run writes the
+# day after the last one in the collection. The schedule writes one a day, and
+# every run by hand writes one more, which moves every date below up by a day.
+#
 # Topics come in four levels, 1 (never used it) to 4 (interview), and each has
 # a kind that decides what its cards look like:
 #   command   a task, and the command for it: learned both ways

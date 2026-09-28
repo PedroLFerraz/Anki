@@ -194,3 +194,63 @@ def test_planning_a_day_that_has_run_leaves_its_cards_alone(ctx, monkeypatch, fa
     assert refused.exit_code != 0
     after = ctx.wh.query("SELECT request_id FROM requests WHERE run_date = ?", [RUN_DATE])
     assert after == before
+
+
+# ---------------------------------------------------------------- the next day
+
+@pytest.fixture
+def cli_ctx(ctx, monkeypatch):
+    from ankigen import cli
+
+    monkeypatch.setattr(pipeline, "open_context", lambda *a, **k: ctx)
+    monkeypatch.setattr(ctx.wh, "close", lambda: None)
+    return cli.app
+
+
+def _tag_collection(cfg, tags):
+    import sqlite3
+
+    con = sqlite3.connect(cfg.anki_collection_path)
+    con.execute("UPDATE notes SET tags = ? WHERE id = 1", (f" {tags} ",))
+    con.commit()
+    con.close()
+
+
+def test_a_plan_run_without_a_date_writes_the_next_day(ctx, cfg, cli_ctx):
+    """Run by hand after the day's cards are in, it adds the next day instead
+    of planning the same topics again over the day that already ran."""
+    from datetime import timedelta
+
+    from typer.testing import CliRunner
+
+    _tag_collection(cfg, f"ankigen ankigen::run_{RUN_DATE} ankigen::topic")
+    nxt = RUN_DATE + timedelta(days=1)
+    shown = CliRunner().invoke(cli_ctx, ["next"])
+    assert shown.exit_code == 0 and shown.output.strip() == str(nxt)
+
+    planned = CliRunner().invoke(cli_ctx, ["run", "--dry-run"])
+    assert planned.exit_code == 0, planned.output
+    assert str(nxt) in planned.output
+    days = {r["run_date"] for r in ctx.wh.query("SELECT DISTINCT run_date FROM requests")}
+    assert days == {nxt}
+
+
+def test_redoing_stages_needs_the_day(ctx, cli_ctx):
+    from typer.testing import CliRunner
+
+    # The message itself is boxed and coloured by rich, so it is not matched.
+    refused = CliRunner().invoke(cli_ctx, ["run", "--stage", "images", "--stage", "export"])
+    assert refused.exit_code == 2
+    assert not ctx.wh.scalar("SELECT COUNT(*) FROM pipeline_runs")
+
+
+def test_cards_for_one_deck_by_hand_are_marked(ctx, fake_llm):
+    stages = ["ingest", "target", "generate", "verify", "dedup"]
+    pipeline.run(ctx, RUN_DATE, stages=stages)
+    planned = ctx.wh.query("SELECT DISTINCT ad_hoc FROM card_outcomes WHERE run_date = ?", [RUN_DATE])
+    assert planned == [{"ad_hoc": False}]
+
+    ctx.ad_hoc = pipeline.AdHoc(deck="DS::SQL", topic="joins")
+    pipeline.run(ctx, RUN_DATE, stages=stages)
+    by_hand = ctx.wh.query("SELECT DISTINCT ad_hoc FROM card_outcomes WHERE run_date = ?", [RUN_DATE])
+    assert by_hand == [{"ad_hoc": True}]

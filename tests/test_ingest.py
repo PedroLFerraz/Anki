@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import date
 
 from conftest import RUN_DATE
 
@@ -164,3 +165,41 @@ def test_old_snapshots_are_dropped_and_recent_ones_kept(wh, modern_collection, t
         "SELECT DISTINCT run_date FROM raw_notes ORDER BY run_date")]
     assert kept == [RUN_DATE - timedelta(days=14), RUN_DATE - timedelta(days=3), RUN_DATE]
     assert pruned == 2
+
+
+# ---------------------------------------------------------------- the next day
+
+def _tag(collection, tags_by_note):
+    con = sqlite3.connect(collection)
+    for nid, tags in tags_by_note.items():
+        con.execute("UPDATE notes SET tags = ? WHERE id = ?", (f" {tags} ", nid))
+    con.commit()
+    con.close()
+
+
+def test_the_next_day_follows_the_last_one_in_the_collection(modern_collection, tmp_path):
+    _tag(modern_collection, {1: "ankigen ankigen::run_2026-09-27 ankigen::topic",
+                             2: "ankigen ankigen::run_2026-09-25 ankigen::topic"})
+    # A run by hand the evening before writes the 28th, and so does a schedule
+    # that missed days: the curriculum is a queue, not a calendar.
+    for today in (date(2026, 9, 27), date(2026, 9, 28), date(2026, 10, 3)):
+        assert ingest.next_run_date(modern_collection, tmp_path / "raw", today) == date(2026, 9, 28)
+
+
+def test_with_nothing_written_yet_the_next_day_is_today(modern_collection, tmp_path):
+    assert ingest.next_run_date(modern_collection, tmp_path / "raw", RUN_DATE) == RUN_DATE
+
+
+def test_cards_for_one_deck_by_hand_do_not_move_the_curriculum(modern_collection, tmp_path):
+    """They carry today's date, and counting them would skip today's topics."""
+    _tag(modern_collection, {1: "ankigen ankigen::run_2026-09-27 ankigen::topic",
+                             2: "ankigen ankigen::run_2026-09-28 ankigen::gap ankigen::ad-hoc"})
+    assert (ingest.next_run_date(modern_collection, tmp_path / "raw", date(2026, 9, 28))
+            == date(2026, 9, 28))
+
+
+def test_only_the_run_tag_itself_counts(modern_collection, tmp_path):
+    _tag(modern_collection, {1: "ankigen::run_2026-09-27",
+                             2: "ankigen::run_2026-10-30::old notmine::ankigen::run_2026-11-01",
+                             3: "ankigen::run_2026-13-45"})
+    assert ingest.run_dates(modern_collection, tmp_path / "raw") == {date(2026, 9, 27)}
