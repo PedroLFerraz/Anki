@@ -1,9 +1,31 @@
-# AnkiGen
+<p align="center">
+  <img src="docs/brand/icon.svg" width="96" alt="">
+</p>
+
+<h1 align="center">AnkiGen</h1>
+
+<p align="center">
+  A daily LLM pipeline that writes Anki cards that fit the deck you already study.
+</p>
+
+<p align="center">
+  <a href="https://github.com/PedroLFerraz/ankigen/actions/workflows/tests.yml"><img src="https://github.com/PedroLFerraz/ankigen/actions/workflows/tests.yml/badge.svg" alt="tests"></a>
+  <a href="https://github.com/PedroLFerraz/ankigen/actions/workflows/daily-cards.yml"><img src="https://github.com/PedroLFerraz/ankigen/actions/workflows/daily-cards.yml/badge.svg" alt="daily cards"></a>
+  <img src="https://img.shields.io/badge/python-3.10%2B-3776AB" alt="Python 3.10+">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT license"></a>
+</p>
+
 
 A daily batch pipeline that reads your Anki collection and writes new cards
 that fit it. The cards match the phrasing of cards you already study, avoid what
 you already know, re-teach what you keep forgetting, and are fact-checked before
 they reach you. You steer it with one YAML profile.
+
+<p align="center">
+  <img src="docs/cards.png" alt="Three generated cards, answer side: an ssh tunnel command with a table explaining each part, a diagram of a load balancer forwarding plain HTTP to the app, and a table comparing 502 and 504 errors" width="100%">
+</p>
+
+<p align="center"><sub>Three cards from one day's run, as Anki shows their answers: a command broken into its parts, a diagram drawn from the card's own answer, and a comparison table.</sub></p>
 
 It is also built the way a data platform team would build it: idempotent stages
 keyed by date, a layered DuckDB warehouse, and output as Parquet. That makes it
@@ -192,4 +214,8 @@ something to be on, so Actions is what actually fires daily.
 4. **Docker**: multi-stage image; the collection and profile mounted read-only.
 5. **AWS free tier**: S3 `raw/`, `curated/` and `gold/` layers via Terraform, and a least-privilege IAM role.
 6. **Kubernetes**: `CronJob` on `kind`, then `KubernetesPodOperator` per stage.
-7. Later: PDF ingestion as a second source, and the Android client (see branch `archive/android-web`).
+7. Later: PDF ingestion as a second source, and an Android client.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
