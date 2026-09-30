@@ -206,3 +206,62 @@ def test_unverified_cards_are_tagged(wh, tmp_path):
     export.run(wh, RUN_DATE, tmp_path / "out")
     tags = _notes_in(tmp_path / "out" / str(RUN_DATE) / f"ankigen_{RUN_DATE}.apkg")[1][0][2]
     assert "ankigen::unverified" in tags
+
+
+# ---------------------------------------------------------------- the same command
+
+def _seed_commands(wh, cards):
+    """Generated command cards: (uid, deck, task, command)."""
+    wh.replace_partition("requests", RUN_DATE,
+                         ("run_date", "request_id", "deck", "topic", "card_type", "n", "reason", "focus", "prompt"),
+                         [(RUN_DATE, "r1", cards[0][1], "t", "command", len(cards), "topic", None, "p")])
+    wh.replace_partition("generated_cards", RUN_DATE, generate.GENERATED_COLUMNS, [
+        (RUN_DATE, uid, "r1", deck, "command", task, f"`{command}` a note",
+         json.dumps({"Task": task, "Command": f"<code>{command}</code>", "Note": "a note"}),
+         "", "m", 0, 0)
+        for uid, deck, task, command in cards
+    ])
+    wh.replace_partition("verified_cards", RUN_DATE, ("run_date", "card_uid", "passed", "score", "reason"),
+                         [(RUN_DATE, c[0], True, 0.9, "") for c in cards])
+
+
+CURL_NOTE = (7, "Data Platform::01 Linux",
+             ["Show only the response headers from https://example.com",
+              "<code>curl -I https://example.com</code>"], 0, 2500, 3)
+
+
+def test_the_same_command_under_another_task_is_a_duplicate(
+        wh, make_collection, tmp_path, fake_embeddings, cfg):
+    """Worded apart enough to pass by meaning, and in another deck: still the
+    same command, and the reverse card would show it twice."""
+    from conftest import SAMPLE_NOTES
+
+    ingest(wh, RUN_DATE, make_collection([*SAMPLE_NOTES, CURL_NOTE]), tmp_path / "raw")
+    _seed_commands(wh, [
+        ("u1", "Data Platform::02 Networking",
+         "Show only the HTTP status line and headers of a page, no body", "curl -I https://example.com"),
+        ("u2", "Data Platform::02 Networking",
+         "Show the status line, headers and body of a page", "curl -i https://example.com"),
+    ])
+    dedup.run(wh, RUN_DATE)
+    rows = {r["card_uid"]: r for r in wh.query("SELECT * FROM dedup_results")}
+    assert rows["u1"]["is_dup"] and rows["u1"]["reason"].startswith("same command in Data Platform::01 Linux")
+    assert not rows["u2"]["is_dup"]                  # -i is not -I
+
+
+def test_the_same_command_twice_in_one_run_keeps_the_first(
+        wh, modern_collection, tmp_path, fake_embeddings, cfg):
+    ingest(wh, RUN_DATE, modern_collection, tmp_path / "raw")
+    _seed_commands(wh, [
+        ("u1", "DS::SQL", "Look up the address of example.com", "dig +short example.com"),
+        ("u2", "DS::SQL", "Print just the IP that a name resolves to", "dig  +short  example.com"),
+    ])
+    dedup.run(wh, RUN_DATE)
+    outcome = {r["card_uid"]: r["is_dup"] for r in wh.query("SELECT * FROM dedup_results")}
+    assert outcome == {"u1": False, "u2": True}
+
+
+def test_command_key_is_the_command_as_typed():
+    assert dedup.command_key("<code>du -sh *</code> | <code>sort -h</code>") == "du -sh * | sort -h"
+    assert dedup.command_key("`q` (in less)") == "q (in less)"
+    assert dedup.command_key("<code>N</code>") != dedup.command_key("<code>n</code>")
