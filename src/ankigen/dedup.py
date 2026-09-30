@@ -1,6 +1,8 @@
 """Dedup stage: drop generated cards that repeat something already studied.
 
-Two tiers, ported from v1:
+Three tiers:
+  0. same command — a command card whose command, as typed, is already the
+     answer of another card, however differently its task is worded
   1. fuzzy — near-identical question wording (cheap, always on)
   2. semantic — embedding similarity, catches rephrasings
 
@@ -15,6 +17,7 @@ embedded — a 5,000-card language deck that isn't being generated for costs not
 from __future__ import annotations
 
 import difflib
+import json
 import logging
 from datetime import date
 from functools import lru_cache
@@ -23,7 +26,7 @@ import numpy as np
 
 from ankigen import llm
 from ankigen.config import ensure_free, settings
-from ankigen.ingest import content_hash
+from ankigen.ingest import content_hash, strip_html
 from ankigen.targeting import in_deck
 
 logger = logging.getLogger(__name__)
@@ -64,6 +67,25 @@ def fuzzy_ratio(a: str, b: str) -> float:
         a = a.removeprefix(art)
         b = b.removeprefix(art)
     return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def command_key(text: str) -> str:
+    """A command as typed, for spotting the same one under another task.
+
+    `curl -I https://example.com` came back on the networking day as "show
+    only the status line and headers" after the Linux day had it as "show
+    only the response headers": worded apart enough to pass as new by
+    meaning, and the reverse card, which shows the command alone, twice.
+    """
+    return " ".join(strip_html(text or "").replace("`", " ").split())
+
+
+def _command_of(card: dict) -> str:
+    """The command a generated command card answers with; "" for other kinds."""
+    if card.get("card_type") != "command":
+        return ""
+    fields = json.loads(card.get("fields_json") or "{}")
+    return command_key(fields.get("Command", ""))
 
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -158,7 +180,7 @@ def run(wh, run_date: date, use_embeddings: bool = True, refill: bool = False) -
     kept cards as well, and written next to the day's other results.
     """
     candidates = wh.query(
-        f"""SELECT g.card_uid, g.deck, g.front, g.back
+        f"""SELECT g.card_uid, g.deck, g.front, g.back, g.card_type, g.fields_json
            FROM generated_cards g
            JOIN verified_cards v USING (run_date, card_uid)
            WHERE g.run_date = ? AND v.passed {"AND g.refill" if refill else ""}
@@ -169,7 +191,8 @@ def run(wh, run_date: date, use_embeddings: bool = True, refill: bool = False) -
 
     notes = wh.query("SELECT deck, front, back, content_hash FROM raw_notes WHERE run_date = ?", [run_date])
     prior = wh.query(
-        "SELECT deck, front, back FROM card_outcomes WHERE outcome = 'kept' AND run_date < ?",
+        "SELECT deck, front, back, card_type, fields_json FROM card_outcomes "
+        "WHERE outcome = 'kept' AND run_date < ?",
         [run_date],
     )
     # One pool for the whole collection, not one per deck. A fact you already
@@ -178,11 +201,20 @@ def run(wh, run_date: date, use_embeddings: bool = True, refill: bool = False) -
     everything = [dict(n) for n in notes]
     if refill:
         prior += wh.query(
-            "SELECT deck, front, back FROM card_outcomes "
+            "SELECT deck, front, back, card_type, fields_json FROM card_outcomes "
             "WHERE outcome = 'kept' AND run_date = ? AND NOT refill",
             [run_date],
         )
     everything += [{**p, "content_hash": content_hash(p["front"], p["back"])} for p in prior]
+
+    # Every answer that is a command, by the command: a note's answer as the
+    # collection has it, a generated card's from its Command field (its `back`
+    # carries the note too). Across the whole collection, like the rest.
+    commands: dict[str, dict] = {}
+    for n in everything:
+        key = _command_of(n) or command_key(n["back"])
+        if key:
+            commands.setdefault(key, n)
 
     # Fuzzy-only runs stay inside the deck: difflib against a whole collection
     # is thousands of comparisons per card, and without embeddings there is no
@@ -222,8 +254,12 @@ def run(wh, run_date: date, use_embeddings: bool = True, refill: bool = False) -
         for card in (c for c in candidates if c["deck"] == deck):
             is_dup, reason, best = False, "", 0.0
             card_vec = vectors.get(content_hash(card["front"], card["back"]))
+            command = _command_of(card)
 
-            if matrix is not None and card_vec is not None and card_vec.shape[0] == matrix.shape[1]:
+            if command and command in commands:
+                is_dup, best = True, 1.0
+                reason = f"same command{_where(card, commands[command])}"
+            elif matrix is not None and card_vec is not None and card_vec.shape[0] == matrix.shape[1]:
                 sims = matrix @ (card_vec / (np.linalg.norm(card_vec) or 1.0))
                 # difflib over a whole collection is far too slow, so the
                 # nearest few by meaning are the only ones worth comparing
@@ -261,6 +297,8 @@ def run(wh, run_date: date, use_embeddings: bool = True, refill: bool = False) -
                 twin = {"deck": card["deck"], "front": card["front"], "back": card["back"],
                         "content_hash": content_hash(card["front"], card["back"])}
                 fuzzy_pool.append(twin)
+                if command:
+                    commands.setdefault(command, twin)
                 if matrix is not None and card_vec is not None and card_vec.shape[0] == matrix.shape[1]:
                     searchable.append(twin)
                     matrix = np.vstack([matrix, card_vec / (np.linalg.norm(card_vec) or 1.0)])
