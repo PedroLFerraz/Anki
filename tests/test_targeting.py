@@ -217,3 +217,17 @@ def test_ad_hoc_is_reproducible(profile, notes):
     a = ad_hoc_request(profile, notes, RUN_DATE, "DS::SQL", topic="joins")
     b = ad_hoc_request(profile, notes, RUN_DATE, "DS::SQL", topic="joins")
     assert a[0].request_id == b[0].request_id and a[0].prompt == b[0].prompt
+
+
+def test_ad_hoc_can_ask_for_a_kind(profile, notes):
+    """A topic outside the curriculum is written as plain cards unless a kind
+    is asked for; with one it gets that shape, e.g. commands learned both ways."""
+    from ankigen.targeting import ad_hoc_request
+
+    [plain] = ad_hoc_request(profile, notes, RUN_DATE, "DS::SQL", topic="psql basics")
+    [cmd] = ad_hoc_request(profile, notes, RUN_DATE, "DS::SQL", topic="psql basics",
+                           n=3, kind="command")
+    assert plain.kind is None and plain.card_type == "basic"
+    assert cmd.kind == "command" and cmd.card_type == "command" and cmd.n == 3
+    assert '"parts"' in cmd.prompt
+    assert cmd.request_id != plain.request_id

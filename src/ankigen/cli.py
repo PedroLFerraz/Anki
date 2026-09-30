@@ -13,6 +13,7 @@ import typer
 from ankigen import ingest, pipeline
 from ankigen.config import NATIVE_PROVIDERS, PROVIDERS, settings
 from ankigen.ingest import AD_HOC_TAG
+from ankigen.profile import KINDS
 
 app = typer.Typer(
     add_completion=False,
@@ -86,10 +87,17 @@ def run(
         None, "--prompt", help="Extra steer for this run, on top of the profile. Needs --deck."
     ),
     count: int = typer.Option(0, "--count", "-n", help="How many cards. Needs --deck."),
+    kind: Optional[str] = typer.Option(
+        None, "--kind",
+        help="What the cards look like: command, shortcut, concept, build or scenario. "
+             "Needs --deck. Blank: the topic's own kind, or the deck's plain cards."),
 ):
     """Run the daily pipeline, or one deck on demand with --deck."""
-    if not deck and (topic or prompt or count):
-        raise typer.BadParameter("--topic, --prompt and --count only make sense with --deck.")
+    if not deck and (topic or prompt or count or kind):
+        raise typer.BadParameter(
+            "--topic, --prompt, --count and --kind only make sense with --deck.")
+    if kind and kind not in KINDS:
+        raise typer.BadParameter(f"--kind is one of {', '.join(KINDS)}, not {kind!r}.")
 
     if stage and "target" not in stage and not run_date and not dry_run:
         # Without a plan there is nothing new to write; this redoes a day that
@@ -102,7 +110,8 @@ def run(
             # One deck by hand is not a day of the curriculum, so it takes
             # today's date and leaves the curriculum's next day where it was.
             d = _date(run_date)
-            ctx.ad_hoc = pipeline.AdHoc(deck=deck, topic=topic or "", extra=prompt or "", n=count)
+            ctx.ad_hoc = pipeline.AdHoc(deck=deck, topic=topic or "", extra=prompt or "",
+                                        n=count, kind=kind or "")
         else:
             d = _plan_date(run_date, ctx)
         if dry_run and _has_cards(ctx, d):
