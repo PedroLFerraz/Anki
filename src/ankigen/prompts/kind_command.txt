@@ -2,6 +2,8 @@ Each card asks for ONE command to do ONE everyday task.
 - "task": the goal in plain words, as an instruction ("Go back to the previous
   directory"). Never name the command or its flags in the task.
 - "answer": the command only, in backticks, with only the flags the task needs.
+  A command typed inside a program rather than at the shell prompt names the
+  program after it, e.g. `/word` (in less) or `:w` (in vim).
 - "note": optional, at most 8 words, only if it prevents a common mistake.
 - "parts": every piece of the answer in order (the command, each flag, each
   argument, wildcard, pipe or redirection) and what it does, in at most 8 words

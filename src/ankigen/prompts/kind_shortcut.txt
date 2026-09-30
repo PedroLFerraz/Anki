@@ -1,6 +1,9 @@
 Each card asks for ONE keyboard shortcut or shell trick for ONE everyday task.
 - "task": what you want to do, in plain words, never naming the keys.
-- "answer": the keys or the trick only, in backticks, e.g. `Ctrl+R`.
+- "answer": the keys or the trick only, in backticks, e.g. `Ctrl+R`. Keys that
+  only work inside one program name it after them, e.g. `q` (in less) or
+  `:wq` (in vim): the other side of the card shows the answer alone, and a bare
+  `q` could mean anything.
 - "note": optional, at most 8 words.
 - "parts": each key combination or trick in the answer and what it does, in at
   most 8 words, e.g. {"part": "Ctrl+W", "means": "delete the word before the cursor"}.
