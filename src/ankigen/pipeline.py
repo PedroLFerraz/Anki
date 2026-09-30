@@ -31,6 +31,7 @@ class AdHoc:
     topic: str = ""
     extra: str = ""
     n: int = 0
+    kind: str = ""          # command, concept...; blank: the topic's own, else plain
 
 
 @dataclass
@@ -73,6 +74,7 @@ def stage_target(ctx: Context, run_date: date) -> dict:
         reqs = targeting.ad_hoc_request(
             ctx.profile, notes, run_date, ctx.ad_hoc.deck,
             topic=ctx.ad_hoc.topic, n=ctx.ad_hoc.n, extra=ctx.ad_hoc.extra,
+            kind=ctx.ad_hoc.kind,
         )
     else:
         reqs = targeting.build_requests(ctx.profile, notes, run_date)

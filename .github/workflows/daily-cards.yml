@@ -41,6 +41,10 @@ on:
         description: "How many cards (needs a deck). Blank uses the deck's quota."
         required: false
         type: string
+      kind:
+        description: "Card shape (needs a deck): command, shortcut, concept, build or scenario."
+        required: false
+        type: string
       run_date:
         description: "Curriculum day to (re)do, YYYY-MM-DD. Blank writes the next one."
         required: false
@@ -185,6 +189,7 @@ jobs:
           IN_TOPIC: ${{ inputs.topic }}
           IN_PROMPT: ${{ inputs.prompt }}
           IN_COUNT: ${{ inputs.count }}
+          IN_KIND: ${{ inputs.kind }}
           IN_STAGES: ${{ inputs.stages }}
         run: |
           python -m ankigen pull
@@ -213,6 +218,7 @@ jobs:
           [ -n "$IN_TOPIC" ]  && args+=(--topic "$IN_TOPIC")
           [ -n "$IN_PROMPT" ] && args+=(--prompt "$IN_PROMPT")
           [ -n "$IN_COUNT" ]  && args+=(--count "$IN_COUNT")
+          [ -n "$IN_KIND" ]   && args+=(--kind "$IN_KIND")
           # Re-running only the later stages redoes a day's pictures without
           # writing new cards, and the push then refreshes them on the notes.
           IFS=', ' read -r -a stages <<< "$IN_STAGES"

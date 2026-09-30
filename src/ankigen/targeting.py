@@ -248,7 +248,8 @@ def _format_contract(card_type: str, wants_images: bool) -> str:
 
 
 def ad_hoc_request(profile: Profile, notes: list[Note], run_date: date, deck: str,
-                   topic: str = "", n: int = 0, extra: str = "") -> list[GenerationRequest]:
+                   topic: str = "", n: int = 0, extra: str = "",
+                   kind: str = "") -> list[GenerationRequest]:
     """One request, asked for by hand, instead of today's plan.
 
     Everything the profile provides still applies — the learner, the style
@@ -267,11 +268,12 @@ def ad_hoc_request(profile: Profile, notes: list[Note], run_date: date, deck: st
                                 if any(in_deck(n_.deck, t.deck) for t in profile.decks)]
     query = topic or deck
     # A topic from the deck's curriculum keeps its kind and level; any other
-    # topic is written the deck's plain way.
-    kind, level = target.kind_of(" ".join(topic.split())) if topic else (None, None)
+    # topic is written the deck's plain way, unless a kind is asked for.
+    planned, level = target.kind_of(" ".join(topic.split())) if topic else (None, None)
+    kind = kind or planned
     req = GenerationRequest(
         request_id=hashlib.sha1(
-            f"{run_date}|{deck}|ad_hoc|{topic}|{extra}".encode()
+            f"{run_date}|{deck}|ad_hoc|{topic}|{extra}|{kind or ''}".encode()
         ).hexdigest()[:12],
         deck=deck,
         card_type=KIND_NOTE[kind] if kind else target.card_type,
