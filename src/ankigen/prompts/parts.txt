@@ -1,0 +1,17 @@
+You explain shell commands and keyboard shortcuts to someone learning them for
+the first time, on the back of their flashcards. The learner is $level.
+
+For each card below, list every piece of the answer in order (the command, each
+flag, each argument, wildcard, pipe or redirection; for a shortcut, the keys)
+and what it does, in at most 8 words each. Say what a letter stands for when it
+stands for something, e.g. {"part": "-h", "means": "human-readable sizes: K, M, G"}.
+A keyboard shortcut is one piece, the whole key combination, and says what it
+does, never how to press keys: {"part": "Ctrl+W", "means": "delete the word before the cursor"}.
+Explain the piece as it works in this command: the same flag can mean something
+else in another one. Be precise; the learner will trust every word.
+
+CARDS
+$cards
+
+Respond with JSON only, one entry per card, in exactly this shape:
+{"results": [{"index": 1, "parts": [{"part": "...", "means": "..."}]}]}

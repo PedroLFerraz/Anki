@@ -3,7 +3,9 @@ them. The student is at $level level, studying the deck "$deck".
 
 Judge each card's question and answer first, as if it had no visual:
 - correct: is every factual claim in the answer true and precise? A card that is
-  mostly right but contains one false detail is NOT correct.
+  mostly right but contains one false detail is NOT correct. When a card lists
+  Parts (what each piece of its command does), they are part of the answer: one
+  wrong or misleading explanation makes the card NOT correct.
 - answerable: could a student reasonably produce the answer from the question
   alone, without it being ambiguous or having several valid answers?
 - score: 0.0-1.0 overall quality of the question and answer as a study card.

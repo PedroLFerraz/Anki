@@ -49,6 +49,47 @@ def html_text(text: str) -> str:
     return re.sub(r"`([^`\n]+)`", r"<code>\1</code>", html.escape(str(text), quote=False))
 
 
+# What each piece of a command does, shown under the answer. The first time a
+# card comes up is when its flags are being learned, and `du -sh * | sort -h`
+# is four new things at once: a breakdown there beats searching mid-review.
+MAX_PARTS = 10
+
+
+def parse_parts(raw) -> list[tuple[str, str]]:
+    """[(piece, what it does)], from [{"part": .., "means": ..}] or [[.., ..]]."""
+    out = []
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, dict):
+            piece, means = item.get("part", ""), item.get("means", "")
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            piece, means = item
+        else:
+            continue
+        piece, means = str(piece).strip().strip("`").strip(), clean_field(means)
+        if piece and means and len(piece) <= 60 and len(means) <= 100:
+            out.append((piece, means))
+    return out[:MAX_PARTS]
+
+
+def parts_html(parts: list[tuple[str, str]]) -> str:
+    """The breakdown as a small table under the answer. Styled inline, so the
+    notes already in a collection need no change to their note type."""
+    if not parts:
+        return ""
+    rows = "".join(
+        f'<tr><td style="padding:1px 12px 1px 0;white-space:nowrap">'
+        f'<code>{html.escape(piece, quote=False)}</code></td>'
+        f'<td style="padding:1px 0">{html_text(means)}</td></tr>'
+        for piece, means in parts)
+    return ('<table class="ankigen-parts" style="margin:12px auto 0;text-align:left;'
+            f'font-size:15px;color:#9aa5b8;border-collapse:collapse">{rows}</table>')
+
+
+def parts_text(parts: list[tuple[str, str]]) -> str:
+    """The breakdown as the checker reads it."""
+    return "; ".join(f"`{piece}` = {means}" for piece, means in parts)
+
+
 def fix_cloze_syntax(text: str) -> str:
     """Repair the cloze markup models commonly get wrong."""
     text = re.sub(r"(?<!\{)\{(c\d+::.*?)\}(?!\})", r"{{\1}}", text)   # {c1::x}   -> {{c1::x}}
@@ -94,8 +135,14 @@ def parse_kind(kind: str, data: dict) -> list[Card]:
                 continue
             if "`" not in answer:
                 answer = f"`{answer}`"
-            cards.append(Card(task, f"{answer} {note}".strip(), {
-                "Task": html_text(task), "Command": html_text(answer), "Note": html_text(note)}))
+            parts = parse_parts(item.get("parts"))
+            fields = {"Task": html_text(task), "Command": html_text(answer),
+                      "Note": html_text(note) + parts_html(parts)}
+            if parts:
+                # Not a field of the note type, so neither the export nor the
+                # push writes it: it is here for the checker.
+                fields["_parts"] = parts_text(parts)
+            cards.append(Card(task, f"{answer} {note}".strip(), fields))
         elif kind == "concept":
             q, a = clean_field(item.get("question", "")), clean_field(item.get("answer", ""))
             if len(q) < 5 or len(a) < 2:
