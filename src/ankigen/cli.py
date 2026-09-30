@@ -360,6 +360,52 @@ def push(
     typer.echo("\nSync Anki on your devices to pull them down.")
 
 
+@app.command("parts")
+def parts(
+    deck: Optional[str] = typer.Option(None, "--deck", help="Only this deck and its subdecks."),
+    limit: int = typer.Option(0, "--limit", "-n", help="At most this many notes (0: all)."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Write and check the breakdowns and show them; change nothing."
+    ),
+):
+    """Add what each piece of the command does to command cards already in Anki.
+
+    New command cards are written with it. This gives the older ones the same,
+    over AnkiWeb like `push`: sync down, edit the notes, sync up. A breakdown
+    the checker faults is left off, and the next run asks for it again.
+    """
+    from ankigen import breakdown
+    from ankigen import push as pusher
+    from ankigen.profile import load_profile
+
+    level = load_profile(settings.ankigen_profile).learner.level
+    auth = pusher._auth()
+    col, auth = pusher.open_collection(auth)
+    try:
+        state, auth = pusher.sync(col, auth)
+        typer.echo(f"  down: {state}")
+        todo = breakdown.missing(col, deck)
+        todo = todo[:limit] if limit else todo
+        typer.echo(f"  {len(todo)} command note(s) without a breakdown")
+        items = breakdown.write(todo, level)
+        for it in items:
+            typer.echo(f"\n  {it.command}")
+            if it.parts:
+                for piece, means in it.parts:
+                    typer.echo(f"    {piece:<16} {means}")
+            else:
+                typer.echo(f"    (left off: {it.issue or 'nothing written'})")
+        if dry_run:
+            typer.echo("\nDry run: nothing changed. Re-run without --dry-run to add them.")
+            return
+        changed = breakdown.apply(col, items)
+        state, auth = pusher.sync(col, auth)
+        typer.echo(f"\n  {changed} note(s) updated; up: {state}")
+    finally:
+        col.close()
+    typer.echo("Sync Anki on your devices to see them.")
+
+
 @app.command()
 def reset(
     yes: bool = typer.Option(False, "--yes", help="Actually do it."),

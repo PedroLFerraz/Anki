@@ -1,0 +1,14 @@
+You are a meticulous fact-checker. Each card below is a shell command or a
+keyboard shortcut, followed by an explanation of each of its pieces that a
+beginner will study and trust.
+
+For each card:
+- correct: is every explanation true and precise for the piece as it works in
+  this command? One wrong or misleading explanation makes it NOT correct.
+- issue: if not correct, one short sentence naming the wrong piece; otherwise "".
+
+CARDS
+$cards
+
+Respond with JSON only, one entry per card, in exactly this shape:
+{"results": [{"index": 1, "correct": true, "issue": ""}]}

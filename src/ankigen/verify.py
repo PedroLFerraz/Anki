@@ -10,6 +10,7 @@ report and the note tags make the difference visible.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date
 from importlib import resources
@@ -33,6 +34,9 @@ def build_prompt(deck: str, level: str, cards: list[dict]) -> str:
 
 def _listed(i: int, card: dict) -> str:
     entry = f"{i}. Q: {card['front']}\n   A: {card['back']}"
+    parts = json.loads(card.get("fields_json") or "{}").get("_parts")
+    if parts:
+        entry += f"\n   Parts: {parts}"
     visual = visuals.parse(card.get("visual_json"))
     return entry + (f"\n   Visual ({visuals.describe(visual)})" if visual else "")
 
@@ -94,7 +98,8 @@ def judge(results: list, cards: list[dict]) -> list[tuple[bool, float | None, st
 
 
 VERIFIED_COLUMNS = ("run_date", "card_uid", "passed", "score", "reason", "visual_ok")
-CARD_QUERY = ("SELECT card_uid, request_id, deck, front, back, visual_json FROM generated_cards "
+CARD_QUERY = ("SELECT card_uid, request_id, deck, front, back, visual_json, fields_json "
+              "FROM generated_cards "
               "WHERE run_date = ? {extra} ORDER BY request_id, card_uid")
 
 

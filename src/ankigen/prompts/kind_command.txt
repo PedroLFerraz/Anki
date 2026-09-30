@@ -3,8 +3,14 @@ Each card asks for ONE command to do ONE everyday task.
   directory"). Never name the command or its flags in the task.
 - "answer": the command only, in backticks, with only the flags the task needs.
 - "note": optional, at most 8 words, only if it prevents a common mistake.
+- "parts": every piece of the answer in order (the command, each flag, each
+  argument, wildcard, pipe or redirection) and what it does, in at most 8 words
+  each. Say what a letter stands for when it stands for something, e.g.
+  {"part": "-h", "means": "human-readable sizes: K, M, G"}.
 Each card is learned in both directions, so the task must be the one thing the
 command is for: someone reading only the command should be able to say it.
+One new idea per card where you can: teach a flag on its own before a card
+combines it with others or pipes it into something else.
 
 Respond with JSON only, shaped like this:
-{"cards": [{"task": "...", "answer": "`...`", "note": ""}]}
+{"cards": [{"task": "...", "answer": "`...`", "note": "", "parts": [{"part": "...", "means": "..."}]}]}

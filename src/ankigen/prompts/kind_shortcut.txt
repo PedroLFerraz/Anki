@@ -2,8 +2,11 @@ Each card asks for ONE keyboard shortcut or shell trick for ONE everyday task.
 - "task": what you want to do, in plain words, never naming the keys.
 - "answer": the keys or the trick only, in backticks, e.g. `Ctrl+R`.
 - "note": optional, at most 8 words.
+- "parts": each key combination or trick in the answer and what it does, in at
+  most 8 words, e.g. {"part": "Ctrl+W", "means": "delete the word before the cursor"}.
+  Never how to press keys.
 Each card is learned in both directions, so the task must be the one thing the
 shortcut is for.
 
 Respond with JSON only, shaped like this:
-{"cards": [{"task": "...", "answer": "`...`", "note": ""}]}
+{"cards": [{"task": "...", "answer": "`...`", "note": "", "parts": [{"part": "...", "means": "..."}]}]}
