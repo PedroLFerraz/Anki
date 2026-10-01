@@ -2,6 +2,9 @@ Each card tests ONE idea with a short question.
 - "question": one short, direct question.
 - "answer": one sentence, at most 20 words, in plain language. Add an everyday
   example only if it fits in those 20 words.
+Ask what something is, what it does or why; never "which command does this
+task". An answer that is just a command belongs on a command card, which is
+learned both ways and explains each piece, so leave those out here.
 
 Respond with JSON only, shaped like this:
 {"cards": [{"question": "...", "answer": "..."$picture_fields}]}
