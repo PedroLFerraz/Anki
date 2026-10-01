@@ -203,3 +203,10 @@ def test_only_the_run_tag_itself_counts(modern_collection, tmp_path):
                              2: "ankigen::run_2026-10-30::old notmine::ankigen::run_2026-11-01",
                              3: "ankigen::run_2026-13-45"})
     assert ingest.run_dates(modern_collection, tmp_path / "raw") == {date(2026, 9, 27)}
+
+
+def test_a_breakdown_under_the_answer_is_not_the_answer():
+    """Dedup reads the back as the command; the table explaining it is extra."""
+    table = '<table class="ankigen-parts" style="x"><tr><td><code>dig</code></td><td>query DNS</td></tr></table>'
+    assert _front_back(["Look up a name", f"<code>dig example.com</code>{table}"])[:2] == \
+        ("Look up a name", "dig example.com")

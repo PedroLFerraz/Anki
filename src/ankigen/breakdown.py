@@ -1,8 +1,11 @@
 """Give the command cards already in the collection what new ones are written
 with: what each piece of the command does, under the answer.
 
-The breakdown goes into the note's own Note field rather than a field of its
-own. A new field would change the note type, which Anki can only sync one way,
+Plain cards whose whole answer is one command get it too, under the answer:
+a concept topic sometimes comes out as "which command does this", and those
+cards are where a beginner meets the command.
+
+The breakdown goes into an existing field rather than a field of its own. A new field would change the note type, which Anki can only sync one way,
 over whichever side loses; appending to a field is an ordinary edit.
 
 Written by the writer's model, checked by the checker's, one batch of notes per
@@ -12,6 +15,7 @@ next run asks again.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from importlib import resources
 from string import Template
@@ -24,8 +28,12 @@ from ankigen.ingest import strip_html
 logger = logging.getLogger(__name__)
 
 NOTETYPE = "AnkiGen Command"
+BASIC = "AnkiGen Basic"
 MARK = 'class="ankigen-parts"'
 BATCH = 10
+# An answer that is one command and nothing else. Not a path (`/etc/hosts`)
+# or a number (`5432`): those are answers, not commands to take apart.
+BARE_COMMAND = re.compile(r"^\s*<code>([^</0-9][^<]*)</code>\s*$")
 
 
 @dataclass
@@ -36,23 +44,28 @@ class Item:
     command: str
     parts: list[tuple[str, str]] | None = None
     issue: str = ""
+    field: str = "Note"             # where the breakdown goes
 
 
 def missing(col, deck: str | None = None) -> list[Item]:
-    """Command notes without a breakdown, oldest first."""
-    notetype = col.models.by_name(NOTETYPE)
-    if not notetype:
-        return []
-    items = []
-    for nid in sorted(col.models.nids(notetype)):
-        note = col.get_note(nid)
-        if MARK in note["Note"]:
-            continue
-        home = col.decks.name(note.cards()[0].did) if note.cards() else ""
-        if deck and not (home == deck or home.startswith(deck + "::")):
-            continue
-        items.append(Item(nid, home, strip_html(note["Task"]), strip_html(note["Command"])))
-    return items
+    """Notes without a breakdown, oldest first: every command note, and every
+    plain note whose answer is a bare command."""
+    found = []
+    for name, task, answer, field in ((NOTETYPE, "Task", "Command", "Note"),
+                                      (BASIC, "Question", "Answer", "Answer")):
+        notetype = col.models.by_name(name)
+        for nid in col.models.nids(notetype) if notetype else []:
+            note = col.get_note(nid)
+            if MARK in note[field]:
+                continue
+            if field == "Answer" and not BARE_COMMAND.match(note[field]):
+                continue
+            home = col.decks.name(note.cards()[0].did) if note.cards() else ""
+            if deck and not (home == deck or home.startswith(deck + "::")):
+                continue
+            found.append(Item(nid, home, strip_html(note[task]), strip_html(note[answer]),
+                              field=field))
+    return sorted(found, key=lambda it: it.nid)
 
 
 def _prompt(name: str, **values) -> str:
@@ -107,9 +120,9 @@ def apply(col, items: list[Item]) -> int:
         if not it.parts:
             continue
         note = col.get_note(it.nid)
-        if MARK in note["Note"]:
+        if MARK in note[it.field]:
             continue
-        note["Note"] = note["Note"] + parts_html(it.parts)
+        note[it.field] = note[it.field] + parts_html(it.parts)
         col.update_note(note)
         changed += 1
     return changed

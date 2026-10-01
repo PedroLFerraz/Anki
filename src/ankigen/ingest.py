@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 FIELD_SEP = "\x1f"
 # Modern Anki stores deck hierarchy with \x1f; the UI (and this project) uses "::".
 DECK_SEP = "\x1f"
+PARTS_TABLE = re.compile(r'<table class="ankigen-parts".*?</table>', re.DOTALL)
 CLOZE_RE = re.compile(r"\{\{c\d+::(.*?)(?:::[^}]*)?\}\}", re.DOTALL)
 
 
@@ -251,6 +252,10 @@ def _front_back(raw_fields: list[str]) -> tuple[str, str, bool]:
     Vorderseite/Rückseite, image-first art cards...). The first two fields that
     still carry text after stripping media are the best general guess.
     """
+    # The breakdown of a command under its answer is study material, not the
+    # answer: read with it, the back of `dig example.com` stops being that
+    # command to dedup.
+    raw_fields = [PARTS_TABLE.sub("", f) for f in raw_fields]
     for raw in raw_fields:
         if CLOZE_RE.search(raw):
             text = strip_html(strip_cloze(raw))

@@ -141,3 +141,29 @@ def test_an_unchecked_breakdown_is_not_added(col, monkeypatch):
 def test_only_the_asked_deck(col):
     assert breakdown.missing(col, "Data Platform::02 Networking") == []
     assert len(breakdown.missing(col, "Data Platform")) == 2
+
+
+def test_a_plain_card_whose_answer_is_a_command_gets_one_too(col, monkeypatch):
+    """Concept topics sometimes come out as "which command does this": a plain
+    card, so no reverse card and no breakdown, which is where a beginner meets
+    the command. Paths and numbers are answers, not commands to take apart."""
+    from ankigen import push
+
+    basic = push._notetype(col, "basic")
+    deck = col.decks.id("Data Platform::02 Networking")
+    for q, a in [("Look up example.com's address", "<code>dig example.com</code>"),
+                 ("Which file maps names to IPs by hand?", "<code>/etc/hosts</code>"),
+                 ("PostgreSQL's default port?", "<code>5432</code>"),
+                 ("What does DNS do?", "Turns a name into an IP address.")]:
+        n = col.new_note(basic)
+        n["Question"], n["Answer"] = q, a
+        col.add_note(n, deck)
+
+    todo = breakdown.missing(col, "Data Platform::02 Networking")
+    assert [(it.command, it.field) for it in todo] == [("dig example.com", "Answer")]
+
+    todo[0].parts = [("dig", "query DNS for a name"), ("example.com", "the name to look up")]
+    assert breakdown.apply(col, todo) == 1
+    answer = col.get_note(todo[0].nid)["Answer"]
+    assert answer.startswith("<code>dig example.com</code>") and 'class="ankigen-parts"' in answer
+    assert breakdown.missing(col, "Data Platform::02 Networking") == []
